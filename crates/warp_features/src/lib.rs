@@ -835,6 +835,11 @@ pub enum FeatureFlag {
     VerticalTabsSummaryMode,
 
     CloudModeInputV2,
+
+    /// Enables sidebar folder workspaces — group tabs by file system folder
+    /// (cmux-style). When enabled, the sidebar shows collapsible workspace
+    /// headers instead of a flat tab list. See `specs/sidebar-folder-workspaces/`.
+    FolderWorkspacesEnabled,
 }
 
 static FLAG_STATES: [AtomicBool; cardinality::<FeatureFlag>()] =
@@ -940,7 +945,7 @@ pub const RELEASE_FLAGS: &[FeatureFlag] = &[
 ];
 
 /// Flags that we want to allow to switch at runtime (assuming RuntimeFeatureFlags is set)
-pub const RUNTIME_FEATURE_FLAGS: &[FeatureFlag] = &[];
+pub const RUNTIME_FEATURE_FLAGS: &[FeatureFlag] = &[FeatureFlag::FolderWorkspacesEnabled];
 
 impl FeatureFlag {
     pub fn is_enabled(&self) -> bool {
