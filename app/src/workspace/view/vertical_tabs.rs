@@ -1672,15 +1672,15 @@ fn render_groups(
         }
 
         // T9 "+ Add Folder Workspace" button.
-        // Spike note: native_dialog::FileDialog opens a modal NSOpenPanel which
-        // runs Cocoa's main run loop while my outer borrow_mut(AppContext) is
-        // still active → 'RefCell already borrowed' panic. Warp's own picker
-        // (warpui::windowing::winit::delegate.rs:333) spawns it on a thread and
-        // sends the path back via event_loop_proxy. For spike we skip the
-        // picker entirely: each click creates a workspace at $HOME with a
-        // timestamped name. Real folder picker integration → v2.
+        // Uses osascript "choose folder" subprocess instead of in-process
+        // native_dialog::FileDialog. native_dialog opens NSOpenPanel as a
+        // modal that pumps Cocoa's run loop, which fires pending async tasks
+        // while my outer borrow_mut(AppContext) is still active → panic.
+        // osascript runs in its own OS process, so waitpid blocks the main
+        // thread without pumping the parent's run loop. Trade-off: blocks UI
+        // until user picks; acceptable for explicit click action.
         let add_btn_text = Text::new(
-            std::borrow::Cow::Borrowed("+ Add Folder Workspace ($HOME, demo)"),
+            std::borrow::Cow::Borrowed("+ Add Folder Workspace"),
             appearance.ui_font_family(),
             12.0,
         )
@@ -1692,16 +1692,30 @@ fn render_groups(
                 .finish(),
         )
         .on_left_mouse_down(|ctx, _, _| {
-            let home = std::env::var("HOME").unwrap_or_else(|_| "/".to_string());
-            let path = std::path::PathBuf::from(&home);
-            let name = format!(
-                "Workspace {}",
-                std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map(|d| d.as_secs() % 100000)
-                    .unwrap_or(0)
-            );
-            ctx.dispatch_typed_action(WorkspaceAction::AddFolderWorkspace { name, path });
+            let script = r#"try
+    POSIX path of (choose folder with prompt "Choose folder workspace")
+on error
+    ""
+end try"#;
+            let result = std::process::Command::new("osascript")
+                .args(["-e", script])
+                .output();
+            if let Ok(out) = result {
+                let raw = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                if !raw.is_empty() {
+                    // POSIX path returns trailing slash; trim it for basename.
+                    let trimmed = raw.trim_end_matches('/');
+                    let path = std::path::PathBuf::from(trimmed);
+                    let name = path
+                        .file_name()
+                        .map(|s| s.to_string_lossy().to_string())
+                        .unwrap_or_else(|| "Workspace".to_string());
+                    ctx.dispatch_typed_action(WorkspaceAction::AddFolderWorkspace {
+                        name,
+                        path,
+                    });
+                }
+            }
             DispatchEventResult::StopPropagation
         })
         .finish();
