@@ -1671,11 +1671,16 @@ fn render_groups(
             groups.add_child(header.build().finish());
         }
 
-        // T9 "+ Add Folder Workspace" button. Uses on_left_mouse_down
-        // (EventHandler doesn't expose .on_click); native_dialog blocks the
-        // UI thread which is acceptable for an explicit user click.
+        // T9 "+ Add Folder Workspace" button.
+        // Spike note: native_dialog::FileDialog opens a modal NSOpenPanel which
+        // runs Cocoa's main run loop while my outer borrow_mut(AppContext) is
+        // still active → 'RefCell already borrowed' panic. Warp's own picker
+        // (warpui::windowing::winit::delegate.rs:333) spawns it on a thread and
+        // sends the path back via event_loop_proxy. For spike we skip the
+        // picker entirely: each click creates a workspace at $HOME with a
+        // timestamped name. Real folder picker integration → v2.
         let add_btn_text = Text::new(
-            std::borrow::Cow::Borrowed("+ Add Folder Workspace"),
+            std::borrow::Cow::Borrowed("+ Add Folder Workspace ($HOME, demo)"),
             appearance.ui_font_family(),
             12.0,
         )
@@ -1687,16 +1692,16 @@ fn render_groups(
                 .finish(),
         )
         .on_left_mouse_down(|ctx, _, _| {
-            if let Ok(Some(path)) = native_dialog::FileDialog::new()
-                .set_title("Add Folder Workspace")
-                .show_open_single_dir()
-            {
-                let name = path
-                    .file_name()
-                    .map(|s| s.to_string_lossy().to_string())
-                    .unwrap_or_else(|| "Workspace".to_string());
-                ctx.dispatch_typed_action(WorkspaceAction::AddFolderWorkspace { name, path });
-            }
+            let home = std::env::var("HOME").unwrap_or_else(|_| "/".to_string());
+            let path = std::path::PathBuf::from(&home);
+            let name = format!(
+                "Workspace {}",
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs() % 100000)
+                    .unwrap_or(0)
+            );
+            ctx.dispatch_typed_action(WorkspaceAction::AddFolderWorkspace { name, path });
             DispatchEventResult::StopPropagation
         })
         .finish();
