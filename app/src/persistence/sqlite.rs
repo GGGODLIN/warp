@@ -203,6 +203,16 @@ pub fn establish_ro_connection(database_url: &str) -> Result<SqliteConnection> {
     establish_connection(database_url, true)
 }
 
+/// Returns a fresh read-write connection, bypassing the writer thread.
+/// **Spike-only**: use sparingly for low-frequency UI mutations (e.g. user
+/// clicking + to add a folder workspace). High-frequency writes must still go
+/// through the writer thread via ModelEvent. SQLite WAL mode + the 1-second
+/// PRAGMA busy_timeout in establish_connection mitigate contention with the
+/// writer thread for these rare cases.
+pub fn establish_rw_connection(database_url: &str) -> Result<SqliteConnection> {
+    establish_connection(database_url, false)
+}
+
 fn establish_connection(database_url: &str, read_only: bool) -> Result<SqliteConnection> {
     let full_database_url = if read_only {
         &format!("file:{database_url}?mode=ro")

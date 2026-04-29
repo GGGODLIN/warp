@@ -135,6 +135,11 @@ pub enum WorkspaceAction {
     CloseTabsRight(usize),
     CloseTabsRightActiveTab,
     AddDefaultTab,
+    /// Open a folder picker and persist the result as a new FolderWorkspace.
+    AddFolderWorkspace {
+        name: String,
+        path: PathBuf,
+    },
     AddTerminalTab {
         hide_homepage: bool,
     },
@@ -729,6 +734,7 @@ impl WorkspaceAction {
             | CloseTabsRightActiveTab
             | ToggleTabColor { .. }
             | AddDefaultTab
+            | AddFolderWorkspace { .. }
             | AddTerminalTab { .. }
             | AddTabWithShell { .. }
             | AddGetStartedTab

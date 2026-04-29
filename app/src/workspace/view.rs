@@ -20315,6 +20315,19 @@ impl TypedActionView for Workspace {
                     ctx.notify();
                 }
             }
+            AddFolderWorkspace { name, path } => {
+                let name = name.clone();
+                let path = path.clone();
+                crate::folder_workspace::FolderWorkspaceModel::handle(ctx).update(
+                    ctx,
+                    move |model, model_ctx| {
+                        if let Err(err) = model.create_workspace(&name, &path, model_ctx) {
+                            log::warn!("Failed to create folder workspace: {err}");
+                        }
+                    },
+                );
+                ctx.notify();
+            }
             ToggleVerticalTabsSettingsPopup => {
                 if FeatureFlag::VerticalTabs.is_enabled()
                     && *TabSettings::as_ref(ctx).use_vertical_tabs

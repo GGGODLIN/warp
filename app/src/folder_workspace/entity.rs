@@ -51,4 +51,24 @@ impl FolderWorkspaceModel {
     pub fn all(&self) -> &[FolderWorkspace] {
         &self.workspaces
     }
+
+    /// Create a new folder workspace, persist via a fresh RW connection
+    /// (spike-pragmatic; see `establish_rw_connection` doc), update in-memory
+    /// state, emit `Created`. Logs and returns Err on DB failure without
+    /// mutating in-memory state, so the model stays consistent with persistence.
+    pub fn create_workspace(
+        &mut self,
+        name: &str,
+        path: &std::path::Path,
+        ctx: &mut ModelContext<Self>,
+    ) -> anyhow::Result<i32> {
+        let database_path = crate::persistence::database_file_path();
+        let mut conn =
+            crate::persistence::establish_rw_connection(&database_path.to_string_lossy())?;
+        let workspace = super::manager::create(&mut conn, name, path)?;
+        let id = workspace.id;
+        self.workspaces.push(workspace);
+        ctx.emit(FolderWorkspaceEvent::Created { id });
+        Ok(id)
+    }
 }

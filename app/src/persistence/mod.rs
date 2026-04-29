@@ -63,6 +63,8 @@ use self::model::{AgentConversation, AgentConversationData, Project};
 pub use sqlite::database_file_path;
 #[cfg(any(feature = "local_fs", feature = "integration_tests"))]
 pub use sqlite::establish_ro_connection;
+#[cfg(any(feature = "local_fs", feature = "integration_tests"))]
+pub use sqlite::establish_rw_connection;
 
 /// Initializes the persistence "subsystem".
 ///
