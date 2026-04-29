@@ -1,9 +1,9 @@
 # Implementation Tasks: Sidebar Folder Workspaces
 
-> **Spec phase**: Phase 3 (TASKS) — awaiting human review before Phase 4 (IMPLEMENT)
+> **Spec phase**: Phase 4 (IMPLEMENT) — partial delivery 2026-04-29
 > **Companions**: [PRODUCT.md](file:///Users/linhancheng/Desktop/projects/warp-fork/specs/sidebar-folder-workspaces/PRODUCT.md) · [TECH.md](file:///Users/linhancheng/Desktop/projects/warp-fork/specs/sidebar-folder-workspaces/TECH.md)
-> **Total**: 14 tasks，分 3 phase（Foundation 5 + Vertical slices 7 + Polish 2）+ 3 checkpoints
-> **Sizing**: 全部 XS / S / M（每個 task 觸碰檔案 ≤ 3）。沒 L / XL。
+> **Original plan**: 14 tasks，分 3 phase（Foundation 5 + Vertical slices 7 + Polish 2）+ 3 checkpoints
+> **Spike delivery**: T1-T8 + T13 → flag-toggle 在 sidebar 看到 "Default" workspace 把現有 tab 包起來。T9-T12 + T14 deferred to v2（見尾段「Spike Outcome」）。
 
 ## Architecture Decisions
 
@@ -381,6 +381,63 @@ skill template 要求：
 
 ---
 
-**Phase 3 done. Awaiting human review before Phase 4 (IMPLEMENT)。**
+**Phase 3 done. Phase 4 IMPLEMENT partial delivery 2026-04-29 — see「Spike Outcome」below.**
 
-Phase 4 用 [`agent-skills:incremental-implementation`](file:///Users/linhancheng/.claude/plugins/cache/addy-agent-skills/agent-skills/1.0.0/skills/incremental-implementation/) 一個 task 一個 task 跑，搭配 [`agent-skills:test-driven-development`](file:///Users/linhancheng/.claude/plugins/cache/addy-agent-skills/agent-skills/1.0.0/skills/test-driven-development/) 寫測試的 task。
+---
+
+## Spike Outcome（2026-04-29）
+
+### 已交付 (T1-T8 + T13)
+
+| Task | Status | Commits |
+|------|--------|---------|
+| T1 FolderWorkspacesEnabled flag | ✅ | `7dbd004` |
+| T2 Diesel migration (table + tabs.folder_workspace_id) | ✅ | `1c73a30` |
+| T3 schema.rs regen | ✅ | `4e0fe67` (+ `6cefbec` fix Tab struct) |
+| T4 FolderWorkspace data model + round-trip test | ✅ | `f1c473f` |
+| T5 grep 4 open tech questions | ✅ | `5fe2587` |
+| T6 manager (CRUD + bootstrap) + 8 unit tests | ✅ | `e1fb2d8` |
+| T7 hardcoded WarpUI view component | ✅ | `93f0bec` |
+| T8 sidebar integration (Entity Model + render) | ✅ | `ff88605` + `78c2322` |
+| T13 bootstrap Default workspace at init | ✅ | `cd8daab` |
+
+**Demo 行為**：toggle `FolderWorkspacesEnabled` in Settings → Developer / Features
+- flag off → sidebar 跟 upstream 一致
+- flag on → 看到 "Default" workspace header（cmux-style，把所有現有 tab 包起來）
+
+### Deferred to v2 (T9-T12 + T14)
+
+原 TASKS.md 的 T9 (UI + folder picker)、T10 (tab → workspace association)、T11-T12 (folder missing handler)、T14 (integration test) 全部 deferred。原因：
+
+**T9 / T10 / T11 / T12** 都需要 **write-side 架構**：
+- `ModelEvent::UpsertFolderWorkspace` enum variant + sqlite.rs worker handler
+- `FolderWorkspaceModel` mutator method（inside-Entity）
+- Tentative-id-vs-DB-id race（Warp 設計只有 1 個 writer connection，不能 2nd RW connection）
+
+T8 path A（Entity Model 層）已經做完 read 側基礎建設。Write 側是同等規模：~1 週工程量。
+
+**T14** integration test 需要 [`crates/integration`](file:///Users/linhancheng/Desktop/projects/warp-fork/crates/integration/) Builder/TestStep 框架的學習曲線。Manager-level unit test (T6) 已 cover 邏輯正確性，integration test 主要 cover render 行為——可放到 v2。
+
+### 重大架構發現（spike outcome）
+
+1. **WarpUI Entity-Handle 學得起來**：模仿 `ProjectManagementModel` pattern，從 spec 撰寫到 T8 完整接好約 1 天。
+2. **Render 不能讀 DB**：必須走 `SingletonEntity` + memory cache pattern。原 TASKS.md T8 寫「manager.get_all() from render」**架構不對**，pivot 到 path A 是對的。
+3. **`vertical_tabs.rs` 動到 break sidebar 的風險**確實存在但可控：單一 `if FeatureFlag::is_enabled() { 新 } else { 原 }` 分支 + flag default off 緩解成功。
+4. **Diesel SQLite RETURNING 限制**：`as_returning()` 不支援，要 fallback `last_insert_rowid()`。
+5. **Single-writer-thread constraint**：`establish_ro_connection` 是 public 但 read-write 是 private，因為 Warp 強制 1 writer 經 ModelEvent。Write-side feature 全部要走 ModelEvent，不能短路。
+6. **Bootstrap migration 跑 init phase 沒問題**：feature flag init 在 `persistence::initialize` 之後，所以 bootstrap 不能查 flag——但 idempotent + flag-off 時 sidebar 看不到 → 安全。
+7. **FF 加 variant + 加 RUNTIME_FEATURE_FLAGS list 自動進 Settings menu**：UI 完全 zero-config，這是 Warp 設計優點。
+
+### Path 決策（per SPIKE.md）
+
+> spike 全跑通 + backend 已有 grouping 概念 → path B (local-only fork, 3-4 週 ship)
+
+✅ **Path B 確認可行**。已交付的 T1-T8+T13 達成 SPIKE 5 個驗證問題：
+
+1. ✅ 環境跑得起來（Day 1）
+2. ✅ Sidebar render 進入點清楚（vertical_tabs.rs:1640-1665）
+3. ✅ Backend 已有 workspace / project 概念（projects.rs 是 file-system tracker，跟 folder_workspace 並存）
+4. ✅ WarpUI Entity-Handle pattern 學得起來
+5. ✅ Hello-world patch 釘上去了（甚至超過 hello-world，做到完整 schema + render）
+
+剩餘工程量估計：v2 (T9-T14) 約 1-2 週做 write-side。Phase 1 + 1-2 週 = Path B 預估 3-4 週符合預期。
