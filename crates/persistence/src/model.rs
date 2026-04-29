@@ -348,6 +348,7 @@ pub struct Tab {
     pub window_id: i32,
     pub custom_title: Option<String>,
     pub color: Option<String>,
+    pub folder_workspace_id: Option<i32>,
 }
 
 #[derive(Insertable)]
