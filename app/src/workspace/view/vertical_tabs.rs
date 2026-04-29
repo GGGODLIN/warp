@@ -1645,6 +1645,29 @@ fn render_groups(
         groups = groups.with_spacing(TABS_MODE_ITEM_SPACING);
     }
 
+    // Folder workspaces (cmux-style sidebar grouping).
+    // Feature-flag gated; flag-off skips entirely so flat tab list renders unchanged.
+    // T8 baseline: render workspace headers only — tabs are not yet associated
+    // with workspaces (T10 wires that).
+    if FeatureFlag::FolderWorkspacesEnabled.is_enabled() {
+        let fw_styles = warpui::ui_components::components::UiComponentStyles {
+            font_family_id: Some(appearance.ui_font_family()),
+            font_size: Some(12.0),
+            ..Default::default()
+        };
+        let fw_model =
+            crate::folder_workspace::FolderWorkspaceModel::handle(app).as_ref(app);
+        for fw in fw_model.all() {
+            let header = crate::folder_workspace::view::FolderWorkspaceHeader::new(
+                fw.name.clone(),
+                Vec::new(),
+            )
+            .with_collapsed(fw.collapsed)
+            .with_style(fw_styles);
+            groups.add_child(header.build().finish());
+        }
+    }
+
     for (visible_tab_index, (tab_index, filtered_pane_ids)) in visible_tabs.iter().enumerate() {
         let insert_before_index = *tab_index;
         let insert_after_index =
