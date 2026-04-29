@@ -2354,6 +2354,11 @@ pub fn enabled_features() -> HashSet<FeatureFlag> {
         FeatureFlag::RecordAppActiveEvents,
         #[cfg(feature = "runtime_feature_flags")]
         FeatureFlag::RuntimeFeatureFlags,
+        // Spike: enable FolderWorkspacesEnabled by default in debug builds so
+        // the demo is visible without flipping a runtime toggle. Remove when
+        // T9+ ships UI mutations and the flag should default off in release.
+        #[cfg(debug_assertions)]
+        FeatureFlag::FolderWorkspacesEnabled,
         #[cfg(feature = "sequential_storage")]
         FeatureFlag::SequentialStorage,
         #[cfg(feature = "in_band_generators_ssh")]
