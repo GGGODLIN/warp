@@ -76,14 +76,48 @@
 | **Bootstrap migration race**（既有 tab vs Default workspace 建立順序） | 啟動時 tab 顯示在沒 workspace 的狀態 | migration 放在 app init phase（非 lazy），確保所有 tab 載入前 Default workspace 已存在 |
 | **Tab → Workspace association schema 選擇**（add column vs junction table） | 影響既有 tabs 表 | 看現行 tabs 表 structure 決定（step 2 前先 grep schema.rs `tabs` 表）。**預設**：tabs 表加 `folder_workspace_id` nullable column（簡單，bootstrap migration 改一次就完成） |
 
-## Open Tech Questions（Phase 3 task breakdown 前確認）
+## Open Tech Questions（T5 已解答 — 2026-04-29）
 
-1. **Tabs 表 structure**：現有 tabs 表長怎樣？加 column 還是 junction table？→ Phase 3 開始前先 grep schema.rs
-2. **Bootstrap migration 觸發點**：app init phase 哪個 hook？→ grep 既有 migration init code 找 callsite
-3. **Settings UI toggle 機制**：feature flag 加進 enum 後 settings 是 auto-discovery 還是手動 register？→ trace `runtime_flags_menu_items()` 即知
-4. **Folder picker UI**：直接 NSOpenPanel 還是 WarpUI 包好的 helper？→ grep 確認
+### Q1：Tabs 表 structure
 
-四個都是 implementation-time 即可解答的，不 block plan review。
+[`crates/persistence/src/schema.rs:358-364`](file:///Users/linhancheng/Desktop/projects/warp-fork/crates/persistence/src/schema.rs)：
+
+```
+tabs (id) {
+    id -> Integer,
+    window_id -> Integer,
+    custom_title -> Nullable<Text>,
+    color -> Nullable<Text>,
+}
+```
+
+FK convention：`<table>_id Integer NOT NULL` referencing PK Integer。`joinable!(tabs -> windows (window_id))` 在 schema.rs:510 下方。
+
+**T2 設計**：
+- `up.sql`：`ALTER TABLE tabs ADD COLUMN folder_workspace_id INTEGER NULL REFERENCES folder_workspaces(id)`
+- schema.rs 加 `folder_workspace_id -> Nullable<Integer>` 到 `tabs!` macro + `joinable!(tabs -> folder_workspaces (folder_workspace_id))`
+
+### Q2：Migration init callsite
+
+- [`crates/persistence/src/lib.rs:5-6`](file:///Users/linhancheng/Desktop/projects/warp-fork/crates/persistence/src/lib.rs)：`pub const MIGRATIONS: EmbeddedMigrations = embed_migrations!("migrations");`
+- [`app/src/persistence/sqlite.rs:406`](file:///Users/linhancheng/Desktop/projects/warp-fork/app/src/persistence/sqlite.rs)：`conn.run_pending_migrations(persistence::MIGRATIONS)`
+
+**結論**：Migration auto-run 在 sqlite.rs 啟動。寫好 SQL 放 [`crates/persistence/migrations/<ts>_folder_workspaces/`](file:///Users/linhancheng/Desktop/projects/warp-fork/crates/persistence/migrations/) `embed_migrations!` 自動拾取，**不用**改其他 init code。
+
+### Q3：FeatureFlag → Settings UI mechanism
+
+- [`app/src/app_menus.rs:8,891`](file:///Users/linhancheng/Desktop/projects/warp-fork/app/src/app_menus.rs)：`debug_menu_items.extend(runtime_flags_menu_items())`
+- [`crates/warp_core/src/features.rs:19-24`](file:///Users/linhancheng/Desktop/projects/warp-fork/crates/warp_core/src/features.rs)：`runtime_flags_menu_items()` iter `RUNTIME_FEATURE_FLAGS` 自動生成 menu items
+
+**結論**：T1 已加 `FolderWorkspacesEnabled` 到 `RUNTIME_FEATURE_FLAGS` → debug menu 自動出現 toggle，**不用**改 `app_menus.rs`。前提：`RuntimeFeatureFlags` 自己 enable（dev build 預設 on，see DEBUG_FLAGS line 855）。
+
+### Q4：Folder picker
+
+兩個 pattern：
+- (a) [`crates/warpui/src/windowing/winit/delegate.rs:333+`](file:///Users/linhancheng/Desktop/projects/warp-fork/crates/warpui/src/windowing/winit/delegate.rs)：`native_dialog::FileDialog`（純 Rust crate，cross-platform，已用於 file open / save）
+- (b) [`crates/warpui/src/platform/mac/objc/window.m:847`](file:///Users/linhancheng/Desktop/projects/warp-fork/crates/warpui/src/platform/mac/objc/window.m)：直接 ObjC `NSOpenPanel`
+
+**T9 採用 (a)**：`native_dialog::FileDialog::new().set_can_select_folders(true).show_open_single_dir()`。理由：純 Rust + 既有依賴 + delegate.rs 333-369 有 spawn-blocking pattern 可抄。
 
 ## Out of Scope (v2+)
 
