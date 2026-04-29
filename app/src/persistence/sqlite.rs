@@ -3226,6 +3226,16 @@ fn read_sqlite_data(
     let workspace_language_servers = get_all_workspace_language_servers_by_workspace(conn)?;
     let multi_agent_conversations = read_agent_conversations(conn)?;
     let projects = get_all_projects(conn)?;
+    // T13 bootstrap: idempotent — only creates the Default workspace if none
+    // exist AND tabs > 0. Always-on so feature flag init order doesn't matter
+    // (FF init runs AFTER persistence::initialize, so we can't query it here).
+    // Has no observable effect when FolderWorkspacesEnabled is off because the
+    // sidebar render path stays flat.
+    if let Err(err) =
+        crate::folder_workspace::manager::bootstrap_default_workspace_for_existing_tabs(conn)
+    {
+        log::warn!("Folder workspace bootstrap failed: {err}");
+    }
     let folder_workspaces =
         crate::folder_workspace::manager::get_all(conn).unwrap_or_else(|err| {
             log::warn!("Failed to load folder workspaces: {err}");
