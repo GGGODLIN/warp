@@ -1648,7 +1648,8 @@ fn render_groups(
     // Folder workspaces (cmux-style sidebar grouping).
     // Feature-flag gated; flag-off skips entirely so flat tab list renders unchanged.
     // T8 baseline: render workspace headers only — tabs are not yet associated
-    // with workspaces (T10 wires that).
+    // with workspaces (T10 wires that). T9 adds a "+" button that opens a native
+    // folder picker and dispatches WorkspaceAction::AddFolderWorkspace.
     if FeatureFlag::FolderWorkspacesEnabled.is_enabled() {
         let fw_styles = warpui::ui_components::components::UiComponentStyles {
             font_family_id: Some(appearance.ui_font_family()),
@@ -1658,14 +1659,48 @@ fn render_groups(
         let fw_model =
             crate::folder_workspace::FolderWorkspaceModel::handle(app).as_ref(app);
         for fw in fw_model.all() {
+            // T11: cheap re-check every render; mkdir → warning auto-clears.
+            let folder_missing = !std::path::Path::new(&fw.path).exists();
             let header = crate::folder_workspace::view::FolderWorkspaceHeader::new(
                 fw.name.clone(),
                 Vec::new(),
             )
             .with_collapsed(fw.collapsed)
+            .with_folder_missing(folder_missing)
             .with_style(fw_styles);
             groups.add_child(header.build().finish());
         }
+
+        // T9 "+ Add Folder Workspace" button. Uses on_left_mouse_down
+        // (EventHandler doesn't expose .on_click); native_dialog blocks the
+        // UI thread which is acceptable for an explicit user click.
+        let add_btn_text = Text::new(
+            std::borrow::Cow::Borrowed("+ Add Folder Workspace"),
+            appearance.ui_font_family(),
+            12.0,
+        )
+        .with_color(theme.sub_text_color(theme.background()).into())
+        .finish();
+        let add_btn = EventHandler::new(
+            Container::new(add_btn_text)
+                .with_padding(Padding::uniform(8.))
+                .finish(),
+        )
+        .on_left_mouse_down(|ctx, _, _| {
+            if let Ok(Some(path)) = native_dialog::FileDialog::new()
+                .set_title("Add Folder Workspace")
+                .show_open_single_dir()
+            {
+                let name = path
+                    .file_name()
+                    .map(|s| s.to_string_lossy().to_string())
+                    .unwrap_or_else(|| "Workspace".to_string());
+                ctx.dispatch_typed_action(WorkspaceAction::AddFolderWorkspace { name, path });
+            }
+            DispatchEventResult::StopPropagation
+        })
+        .finish();
+        groups.add_child(add_btn);
     }
 
     for (visible_tab_index, (tab_index, filtered_pane_ids)) in visible_tabs.iter().enumerate() {

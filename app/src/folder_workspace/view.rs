@@ -25,6 +25,7 @@ pub struct FolderWorkspaceHeader {
     name: String,
     tab_names: Vec<String>,
     collapsed: bool,
+    folder_missing: bool,
     styles: UiComponentStyles,
 }
 
@@ -34,12 +35,18 @@ impl FolderWorkspaceHeader {
             name,
             tab_names,
             collapsed: false,
+            folder_missing: false,
             styles: UiComponentStyles::default(),
         }
     }
 
     pub fn with_collapsed(mut self, collapsed: bool) -> Self {
         self.collapsed = collapsed;
+        self
+    }
+
+    pub fn with_folder_missing(mut self, missing: bool) -> Self {
+        self.folder_missing = missing;
         self
     }
 }
@@ -55,8 +62,9 @@ impl UiComponent for FolderWorkspaceHeader {
         let font_size = styles.font_size.unwrap_or_default();
 
         let arrow = if self.collapsed { "▸" } else { "▾" };
+        let warn = if self.folder_missing { " ⚠" } else { "" };
         let header_text = Text::new(
-            Cow::Owned(format!("{} {}", arrow, self.name)),
+            Cow::Owned(format!("{} {}{}", arrow, self.name, warn)),
             font_family,
             font_size,
         )
