@@ -14275,6 +14275,7 @@ dependencies = [
  "mio",
  "mockall",
  "mockito",
+ "native-dialog",
  "natural_language_detection",
  "nix 0.26.4",
  "notify-debouncer-full",
