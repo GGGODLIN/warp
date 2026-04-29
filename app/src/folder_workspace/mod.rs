@@ -7,6 +7,10 @@
 // view into vertical_tabs.rs sidebar render. Remove this attribute then.
 #![allow(dead_code)]
 
+pub mod entity;
 pub mod manager;
 pub mod model;
 pub mod view;
+
+pub use entity::FolderWorkspaceModel;
+pub use model::FolderWorkspace;

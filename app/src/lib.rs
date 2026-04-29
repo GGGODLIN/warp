@@ -1103,6 +1103,7 @@ fn initialize_app(
         workspace_language_servers,
         multi_agent_conversations,
         persisted_projects,
+        persisted_folder_workspaces,
         persisted_project_rules,
         persisted_ignored_suggestions,
         persisted_mcp_server_installations,
@@ -1124,6 +1125,7 @@ fn initialize_app(
                 sqlite_data.workspace_language_servers,
                 sqlite_data.multi_agent_conversations,
                 sqlite_data.projects,
+                sqlite_data.folder_workspaces,
                 sqlite_data.project_rules,
                 sqlite_data.ignored_suggestions,
                 sqlite_data.mcp_server_installations,
@@ -1132,6 +1134,7 @@ fn initialize_app(
         })
         .unwrap_or_else(|| {
             (
+                Default::default(),
                 Default::default(),
                 Default::default(),
                 Default::default(),
@@ -1409,6 +1412,14 @@ fn initialize_app(
 
     ctx.add_singleton_model(|ctx| {
         ProjectManagementModel::new(persisted_projects, persistence_writer.sender(), ctx)
+    });
+
+    ctx.add_singleton_model(|ctx| {
+        crate::folder_workspace::FolderWorkspaceModel::new(
+            persisted_folder_workspaces,
+            persistence_writer.sender(),
+            ctx,
+        )
     });
 
     ctx.add_singleton_model(move |_| History::new(command_history));

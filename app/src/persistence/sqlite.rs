@@ -3226,6 +3226,11 @@ fn read_sqlite_data(
     let workspace_language_servers = get_all_workspace_language_servers_by_workspace(conn)?;
     let multi_agent_conversations = read_agent_conversations(conn)?;
     let projects = get_all_projects(conn)?;
+    let folder_workspaces =
+        crate::folder_workspace::manager::get_all(conn).unwrap_or_else(|err| {
+            log::warn!("Failed to load folder workspaces: {err}");
+            Vec::new()
+        });
     let project_rules = get_all_project_rules(conn)?;
     let ignored_suggestions = get_all_ignored_suggestions(conn)?;
     let mcp_server_installations = get_all_mcp_server_installations(conn)?;
@@ -3246,6 +3251,7 @@ fn read_sqlite_data(
         workspace_language_servers,
         multi_agent_conversations,
         projects,
+        folder_workspaces,
         project_rules,
         ignored_suggestions,
         mcp_server_installations,
