@@ -3,7 +3,7 @@
 > **Spec phase**: Phase 4 (IMPLEMENT) — partial delivery 2026-04-29
 > **Companions**: [PRODUCT.md](file:///Users/linhancheng/Desktop/projects/warp-fork/specs/sidebar-folder-workspaces/PRODUCT.md) · [TECH.md](file:///Users/linhancheng/Desktop/projects/warp-fork/specs/sidebar-folder-workspaces/TECH.md)
 > **Original plan**: 14 tasks，分 3 phase（Foundation 5 + Vertical slices 7 + Polish 2）+ 3 checkpoints
-> **Spike delivery**: T1-T8 + T13 → flag-toggle 在 sidebar 看到 "Default" workspace 把現有 tab 包起來。T9-T12 + T14 deferred to v2（見尾段「Spike Outcome」）。
+> **Spike delivery**: T1-T9 + T11 + T13 → flag default-on (debug build)，sidebar 看到 "Default" workspace + 可建新 workspace via "+" 按鈕 + folder picker + 資料夾被刪會顯示 ⚠ warning。T10 + T12 + T14 deferred (見尾段「Spike Outcome」)。
 
 ## Architecture Decisions
 
@@ -387,7 +387,7 @@ skill template 要求：
 
 ## Spike Outcome（2026-04-29）
 
-### 已交付 (T1-T8 + T13)
+### 已交付 (T1-T9 + T11 + T13)
 
 | Task | Status | Commits |
 |------|--------|---------|
@@ -400,23 +400,24 @@ skill template 要求：
 | T7 hardcoded WarpUI view component | ✅ | `93f0bec` |
 | T8 sidebar integration (Entity Model + render) | ✅ | `ff88605` + `78c2322` |
 | T13 bootstrap Default workspace at init | ✅ | `cd8daab` |
+| chore: default-on in debug builds | ✅ | `a418008` |
+| T9 + button + folder picker + create_workspace mutator | ✅ | `18edb76` + `0c03202` |
+| T11 folder existence warning ⚠ icon | ✅ | `0c03202` |
 
-**Demo 行為**：toggle `FolderWorkspacesEnabled` in Settings → Developer / Features
-- flag off → sidebar 跟 upstream 一致
-- flag on → 看到 "Default" workspace header（cmux-style，把所有現有 tab 包起來）
+**Demo 行為**：debug build 自動 on `FolderWorkspacesEnabled`
+- 看到 "Default" workspace header（bootstrap 把現有 tab 包起來）
+- 看到 "+ Add Folder Workspace" 按鈕，點 → 開 macOS folder picker → 選資料夾 → 出現新 workspace
+- 把 workspace 對應 folder `rm -rf` → 標題變 `▾ Name ⚠` warning；`mkdir` 同名 → warning 自動消失
 
-### Deferred to v2 (T9-T12 + T14)
+### Deferred to v2 (T10 + T12 + T14)
 
-原 TASKS.md 的 T9 (UI + folder picker)、T10 (tab → workspace association)、T11-T12 (folder missing handler)、T14 (integration test) 全部 deferred。原因：
+**T10 (tab → workspace association)**：需要先定義「current workspace」UX 概念（哪個 tab 開在哪個 workspace 之下）— v1 暫時所有新 tab 進原本平 list。
 
-**T9 / T10 / T11 / T12** 都需要 **write-side 架構**：
-- `ModelEvent::UpsertFolderWorkspace` enum variant + sqlite.rs worker handler
-- `FolderWorkspaceModel` mutator method（inside-Entity）
-- Tentative-id-vs-DB-id race（Warp 設計只有 1 個 writer connection，不能 2nd RW connection）
+**T12 (cwd fallback + 一次性 toast)**：依賴 T10 + 需找 toast 機制。Folder missing 已有 ⚠ visual 警告（T11），cwd fallback 屬 nice-to-have。
 
-T8 path A（Entity Model 層）已經做完 read 側基礎建設。Write 側是同等規模：~1 週工程量。
+**T14 (integration test)**：需要 [`crates/integration`](file:///Users/linhancheng/Desktop/projects/warp-fork/crates/integration/) Builder/TestStep 框架的學習曲線。Manager-level unit test (T6 + T4) 已 cover 邏輯正確性，integration test 主要 cover render 行為——可放到 v2。
 
-**T14** integration test 需要 [`crates/integration`](file:///Users/linhancheng/Desktop/projects/warp-fork/crates/integration/) Builder/TestStep 框架的學習曲線。Manager-level unit test (T6) 已 cover 邏輯正確性，integration test 主要 cover render 行為——可放到 v2。
+**T9 write-side 注記**：採 fresh RW connection 路線（`establish_rw_connection`）而非原 TASKS.md 設想的 ModelEvent worker。違反 Warp 「single writer」 advisory（[`sqlite.rs:200-201`](file:///Users/linhancheng/Desktop/projects/warp-fork/app/src/persistence/sqlite.rs)），但 user 點 "+" 不頻繁 + WAL + busy_timeout=1s 緩解 contention。Production 級別的 path B 應改回 ModelEvent。
 
 ### 重大架構發現（spike outcome）
 
