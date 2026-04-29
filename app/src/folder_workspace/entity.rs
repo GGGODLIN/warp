@@ -71,4 +71,24 @@ impl FolderWorkspaceModel {
         ctx.emit(FolderWorkspaceEvent::Created { id });
         Ok(id)
     }
+
+    /// Toggle the collapsed state of a workspace by id, persisting the new
+    /// value and emitting `Updated`. No-op if the id is unknown.
+    pub fn toggle_collapsed(
+        &mut self,
+        id: i32,
+        ctx: &mut ModelContext<Self>,
+    ) -> anyhow::Result<()> {
+        let Some(idx) = self.workspaces.iter().position(|w| w.id == id) else {
+            return Ok(());
+        };
+        let new_value = !self.workspaces[idx].collapsed;
+        let database_path = crate::persistence::database_file_path();
+        let mut conn =
+            crate::persistence::establish_rw_connection(&database_path.to_string_lossy())?;
+        super::manager::update_collapsed(&mut conn, id, new_value)?;
+        self.workspaces[idx].collapsed = new_value;
+        ctx.emit(FolderWorkspaceEvent::Updated { id });
+        Ok(())
+    }
 }

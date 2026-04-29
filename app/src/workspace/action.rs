@@ -140,6 +140,16 @@ pub enum WorkspaceAction {
         name: String,
         path: PathBuf,
     },
+    /// Toggle the collapsed state of a folder workspace by id.
+    ToggleFolderWorkspaceCollapsed {
+        id: i32,
+    },
+    /// Add a new terminal tab inside a specific folder workspace, with cwd
+    /// defaulting to that workspace's folder path.
+    AddTabToFolderWorkspace {
+        folder_workspace_id: i32,
+        path: PathBuf,
+    },
     AddTerminalTab {
         hide_homepage: bool,
     },
@@ -735,6 +745,8 @@ impl WorkspaceAction {
             | ToggleTabColor { .. }
             | AddDefaultTab
             | AddFolderWorkspace { .. }
+            | ToggleFolderWorkspaceCollapsed { .. }
+            | AddTabToFolderWorkspace { .. }
             | AddTerminalTab { .. }
             | AddTabWithShell { .. }
             | AddGetStartedTab

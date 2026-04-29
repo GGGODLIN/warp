@@ -66,6 +66,7 @@ pub struct TabSnapshot {
     pub selected_color: SelectedTabColor,
     pub left_panel: Option<LeftPanelSnapshot>,
     pub right_panel: Option<RightPanelSnapshot>,
+    pub folder_workspace_id: Option<i32>,
 }
 
 impl TabSnapshot {

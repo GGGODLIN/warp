@@ -1646,21 +1646,60 @@ fn render_groups(
     }
 
     // Folder workspaces (cmux-style sidebar grouping).
-    // Feature-flag gated; flag-off skips entirely so flat tab list renders unchanged.
-    // T8 baseline: render workspace headers only — tabs are not yet associated
-    // with workspaces (T10 wires that). T9 adds a "+" button that opens a native
-    // folder picker and dispatches WorkspaceAction::AddFolderWorkspace.
+    // Feature-flag gated; flag-off keeps the flat tab list path unchanged so
+    // upstream regressions stay contained.
     if FeatureFlag::FolderWorkspacesEnabled.is_enabled() {
+        let workspaces_snapshot: Vec<crate::folder_workspace::FolderWorkspace> = {
+            let model =
+                crate::folder_workspace::FolderWorkspaceModel::handle(app).as_ref(app);
+            model.all().to_vec()
+        };
+        let known_ids: std::collections::HashSet<i32> =
+            workspaces_snapshot.iter().map(|w| w.id).collect();
+        let mut by_workspace: std::collections::HashMap<i32, Vec<usize>> =
+            std::collections::HashMap::new();
+        let mut unassigned: Vec<usize> = Vec::new();
+        for (visible_index, (tab_index, _filtered)) in visible_tabs.iter().enumerate() {
+            let tab = &workspace.tabs[*tab_index];
+            match tab.folder_workspace_id {
+                Some(id) if known_ids.contains(&id) => {
+                    by_workspace.entry(id).or_default().push(visible_index);
+                }
+                _ => unassigned.push(visible_index),
+            }
+        }
+
         let fw_styles = warpui::ui_components::components::UiComponentStyles {
             font_family_id: Some(appearance.ui_font_family()),
             font_size: Some(12.0),
             ..Default::default()
         };
-        let fw_model =
-            crate::folder_workspace::FolderWorkspaceModel::handle(app).as_ref(app);
-        for fw in fw_model.all() {
-            // T11: cheap re-check every render; mkdir → warning auto-clears.
+
+        for (visible_index, (tab_index, filtered_pane_ids)) in visible_tabs.iter().enumerate() {
+            if !unassigned.contains(&visible_index) {
+                continue;
+            }
+            let insert_before_index = *tab_index;
+            let insert_after_index =
+                (visible_index == visible_tabs.len() - 1).then_some(tab_index + 1);
+            groups.add_child(render_tab_group(
+                state,
+                workspace,
+                *tab_index,
+                &workspace.tabs[*tab_index],
+                filtered_pane_ids.as_deref(),
+                TabGroupDragState {
+                    is_any_pane_dragging,
+                    insert_before_index,
+                    insert_after_index,
+                },
+                app,
+            ));
+        }
+
+        for fw in &workspaces_snapshot {
             let folder_missing = !std::path::Path::new(&fw.path).exists();
+            let fw_id = fw.id;
             let header = crate::folder_workspace::view::FolderWorkspaceHeader::new(
                 fw.name.clone(),
                 Vec::new(),
@@ -1668,17 +1707,72 @@ fn render_groups(
             .with_collapsed(fw.collapsed)
             .with_folder_missing(folder_missing)
             .with_style(fw_styles);
-            groups.add_child(header.build().finish());
+            let header_clickable = EventHandler::new(header.build().finish())
+                .on_left_mouse_down(move |ctx, _, _| {
+                    ctx.dispatch_typed_action(
+                        WorkspaceAction::ToggleFolderWorkspaceCollapsed { id: fw_id },
+                    );
+                    DispatchEventResult::StopPropagation
+                })
+                .finish();
+            groups.add_child(header_clickable);
+
+            if !fw.collapsed {
+                if let Some(indices) = by_workspace.get(&fw.id) {
+                    for &visible_index in indices {
+                        let (tab_index, filtered_pane_ids) = &visible_tabs[visible_index];
+                        let row = render_tab_group(
+                            state,
+                            workspace,
+                            *tab_index,
+                            &workspace.tabs[*tab_index],
+                            filtered_pane_ids.as_deref(),
+                            TabGroupDragState {
+                                is_any_pane_dragging,
+                                insert_before_index: *tab_index,
+                                insert_after_index: None,
+                            },
+                            app,
+                        );
+                        let indented = Container::new(row)
+                            .with_padding(Padding::uniform(0.).with_left(12.))
+                            .finish();
+                        groups.add_child(indented);
+                    }
+                }
+
+                let new_tab_path = std::path::PathBuf::from(&fw.path);
+                let new_tab_text = Text::new(
+                    std::borrow::Cow::Borrowed("+ New Tab"),
+                    appearance.ui_font_family(),
+                    12.0,
+                )
+                .with_color(theme.sub_text_color(theme.background()).into())
+                .finish();
+                let new_tab_btn = EventHandler::new(
+                    Container::new(new_tab_text)
+                        .with_padding(Padding::uniform(6.).with_left(20.))
+                        .finish(),
+                )
+                .on_left_mouse_down(move |ctx, _, _| {
+                    ctx.dispatch_typed_action(
+                        WorkspaceAction::AddTabToFolderWorkspace {
+                            folder_workspace_id: fw_id,
+                            path: new_tab_path.clone(),
+                        },
+                    );
+                    DispatchEventResult::StopPropagation
+                })
+                .finish();
+                groups.add_child(new_tab_btn);
+            }
         }
 
-        // T9 "+ Add Folder Workspace" button.
+        // "+ Add Folder Workspace" button — keep at bottom under all groups.
         // Uses osascript "choose folder" subprocess instead of in-process
         // native_dialog::FileDialog. native_dialog opens NSOpenPanel as a
         // modal that pumps Cocoa's run loop, which fires pending async tasks
         // while my outer borrow_mut(AppContext) is still active → panic.
-        // osascript runs in its own OS process, so waitpid blocks the main
-        // thread without pumping the parent's run loop. Trade-off: blocks UI
-        // until user picks; acceptable for explicit click action.
         let add_btn_text = Text::new(
             std::borrow::Cow::Borrowed("+ Add Folder Workspace"),
             appearance.ui_font_family(),
@@ -1703,7 +1797,6 @@ end try"#;
             if let Ok(out) = result {
                 let raw = String::from_utf8_lossy(&out.stdout).trim().to_string();
                 if !raw.is_empty() {
-                    // POSIX path returns trailing slash; trim it for basename.
                     let trimmed = raw.trim_end_matches('/');
                     let path = std::path::PathBuf::from(trimmed);
                     let name = path
@@ -1720,25 +1813,25 @@ end try"#;
         })
         .finish();
         groups.add_child(add_btn);
-    }
-
-    for (visible_tab_index, (tab_index, filtered_pane_ids)) in visible_tabs.iter().enumerate() {
-        let insert_before_index = *tab_index;
-        let insert_after_index =
-            (visible_tab_index == visible_tabs.len() - 1).then_some(tab_index + 1);
-        groups.add_child(render_tab_group(
-            state,
-            workspace,
-            *tab_index,
-            &workspace.tabs[*tab_index],
-            filtered_pane_ids.as_deref(),
-            TabGroupDragState {
-                is_any_pane_dragging,
-                insert_before_index,
-                insert_after_index,
-            },
-            app,
-        ));
+    } else {
+        for (visible_tab_index, (tab_index, filtered_pane_ids)) in visible_tabs.iter().enumerate() {
+            let insert_before_index = *tab_index;
+            let insert_after_index =
+                (visible_tab_index == visible_tabs.len() - 1).then_some(tab_index + 1);
+            groups.add_child(render_tab_group(
+                state,
+                workspace,
+                *tab_index,
+                &workspace.tabs[*tab_index],
+                filtered_pane_ids.as_deref(),
+                TabGroupDragState {
+                    is_any_pane_dragging,
+                    insert_before_index,
+                    insert_after_index,
+                },
+                app,
+            ));
+        }
     }
 
     // Prune stale badge mouse states for panes that no longer exist.

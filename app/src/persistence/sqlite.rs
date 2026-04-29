@@ -911,6 +911,7 @@ fn save_app_state(conn: &mut SqliteConnection, app_state: &AppState) -> Result<(
                         SelectedTabColor::Unset => None,
                         _ => serde_yaml::to_string(&tab.selected_color).ok(),
                     },
+                    folder_workspace_id: tab.folder_workspace_id,
                 })
                 .collect();
 
@@ -2722,6 +2723,7 @@ fn read_sqlite_data(
                             .unwrap_or_default(),
                         left_panel,
                         right_panel,
+                        folder_workspace_id: tab.folder_workspace_id,
                     })
                 })
                 .collect();

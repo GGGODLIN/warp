@@ -3553,6 +3553,8 @@ impl Workspace {
                         self.tabs[tab_index].default_directory_color =
                             saved_tab.default_directory_color;
                         self.tabs[tab_index].selected_color = saved_tab.selected_color;
+                        self.tabs[tab_index].folder_workspace_id =
+                            saved_tab.folder_workspace_id;
 
                         let pane_group = self.tabs[tab_index].pane_group.clone();
 
@@ -9794,6 +9796,10 @@ impl Workspace {
                         .map_or(SelectedTabColor::Unset, |tab| tab.selected_color),
                     left_panel,
                     right_panel,
+                    folder_workspace_id: self
+                        .tabs
+                        .get(tab_index)
+                        .and_then(|tab| tab.folder_workspace_id),
                 }
             })
             .filter(|tab| {
@@ -10815,6 +10821,29 @@ impl Workspace {
             self.active_tab_pane_group().update(ctx, |pg, ctx| {
                 pg.set_left_panel_open(true, ctx);
             });
+        }
+
+        if !is_restoration && FeatureFlag::FolderWorkspacesEnabled.is_enabled() {
+            self.assign_default_folder_workspace_to_active_tab(ctx);
+        }
+    }
+
+    fn assign_default_folder_workspace_to_active_tab(&mut self, ctx: &AppContext) {
+        let idx = self.active_tab_index;
+        if let Some(tab) = self.tabs.get(idx) {
+            if tab.folder_workspace_id.is_some() {
+                return;
+            }
+        } else {
+            return;
+        }
+        let fallback = crate::folder_workspace::FolderWorkspaceModel::handle(ctx)
+            .as_ref(ctx)
+            .all()
+            .first()
+            .map(|fw| fw.id);
+        if let Some(id) = fallback {
+            self.tabs[idx].folder_workspace_id = Some(id);
         }
     }
 
@@ -20326,6 +20355,45 @@ impl TypedActionView for Workspace {
                         }
                     },
                 );
+                ctx.notify();
+            }
+            ToggleFolderWorkspaceCollapsed { id } => {
+                let id = *id;
+                crate::folder_workspace::FolderWorkspaceModel::handle(ctx).update(
+                    ctx,
+                    move |model, model_ctx| {
+                        if let Err(err) = model.toggle_collapsed(id, model_ctx) {
+                            log::warn!(
+                                "Failed to toggle folder workspace collapsed: {err}"
+                            );
+                        }
+                    },
+                );
+                ctx.notify();
+            }
+            AddTabToFolderWorkspace {
+                folder_workspace_id,
+                path,
+            } => {
+                let workspace_id = *folder_workspace_id;
+                let initial_directory = if path.exists() {
+                    Some(path.clone())
+                } else {
+                    std::env::var("HOME").ok().map(PathBuf::from)
+                };
+                self.add_tab_with_pane_layout(
+                    PanesLayout::SingleTerminal(Box::new(NewTerminalOptions {
+                        initial_directory,
+                        ..Default::default()
+                    })),
+                    Arc::new(HashMap::new()),
+                    None,
+                    ctx,
+                );
+                let idx = self.active_tab_index;
+                if let Some(tab) = self.tabs.get_mut(idx) {
+                    tab.folder_workspace_id = Some(workspace_id);
+                }
                 ctx.notify();
             }
             ToggleVerticalTabsSettingsPopup => {
