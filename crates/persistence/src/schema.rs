@@ -172,6 +172,17 @@ diesel::table! {
 }
 
 diesel::table! {
+    folder_workspaces (id) {
+        id -> Integer,
+        name -> Text,
+        path -> Text,
+        display_order -> Integer,
+        collapsed -> Bool,
+        created_ts -> Timestamp,
+    }
+}
+
+diesel::table! {
     folders (id) {
         id -> Integer,
         name -> Text,
@@ -360,6 +371,7 @@ diesel::table! {
         window_id -> Integer,
         custom_title -> Nullable<Text>,
         color -> Nullable<Text>,
+        folder_workspace_id -> Nullable<Integer>,
     }
 }
 
@@ -509,6 +521,7 @@ diesel::joinable!(pane_branches -> pane_nodes (pane_node_id));
 diesel::joinable!(pane_leaves -> pane_nodes (pane_node_id));
 diesel::joinable!(pane_nodes -> tabs (tab_id));
 diesel::joinable!(panels -> tabs (tab_id));
+diesel::joinable!(tabs -> folder_workspaces (folder_workspace_id));
 diesel::joinable!(tabs -> windows (window_id));
 diesel::joinable!(team_members -> teams (team_id));
 diesel::joinable!(team_settings -> teams (team_id));
@@ -517,6 +530,7 @@ diesel::joinable!(workspace_language_server -> workspace_metadata (workspace_id)
 diesel::allow_tables_to_appear_in_same_query!(
     ambient_agent_panes,
     app,
+    folder_workspaces,
     pane_branches,
     pane_leaves,
     pane_nodes,
