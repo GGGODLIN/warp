@@ -73,6 +73,35 @@ pub fn delete(conn: &mut SqliteConnection, id: i32) -> QueryResult<usize> {
     diesel::delete(folder_workspaces::table.find(id)).execute(conn)
 }
 
+pub fn rename(conn: &mut SqliteConnection, id: i32, new_name: &str) -> QueryResult<usize> {
+    diesel::update(folder_workspaces::table.find(id))
+        .set(folder_workspaces::name.eq(new_name))
+        .execute(conn)
+}
+
+pub fn set_display_order(
+    conn: &mut SqliteConnection,
+    id: i32,
+    new_order: i32,
+) -> QueryResult<usize> {
+    diesel::update(folder_workspaces::table.find(id))
+        .set(folder_workspaces::display_order.eq(new_order))
+        .execute(conn)
+}
+
+/// Delete a workspace, reassigning its tabs to `fallback_id` (or NULL if None).
+pub fn delete_with_tab_reassignment(
+    conn: &mut SqliteConnection,
+    id: i32,
+    fallback_id: Option<i32>,
+) -> QueryResult<()> {
+    diesel::update(tabs::table.filter(tabs::folder_workspace_id.eq(id)))
+        .set(tabs::folder_workspace_id.eq(fallback_id))
+        .execute(conn)?;
+    diesel::delete(folder_workspaces::table.find(id)).execute(conn)?;
+    Ok(())
+}
+
 /// Idempotent bootstrap: if no folder_workspaces exist but tabs do, create a
 /// "Default" workspace (path = `$HOME`) and assign all existing tabs to it.
 /// Subsequent calls return `Ok(None)` without modifying state.

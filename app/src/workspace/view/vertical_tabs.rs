@@ -1700,18 +1700,102 @@ fn render_groups(
         for fw in &workspaces_snapshot {
             let folder_missing = !std::path::Path::new(&fw.path).exists();
             let fw_id = fw.id;
-            let header = crate::folder_workspace::view::FolderWorkspaceHeader::new(
+            let tab_count = by_workspace.get(&fw.id).map(|v| v.len()).unwrap_or(0);
+            let header_inner = crate::folder_workspace::view::FolderWorkspaceHeader::new(
                 fw.name.clone(),
-                Vec::new(),
             )
+            .with_path(fw.path.clone())
+            .with_tab_count(tab_count)
             .with_collapsed(fw.collapsed)
             .with_folder_missing(folder_missing)
-            .with_style(fw_styles);
-            let header_clickable = EventHandler::new(header.build().finish())
+            .with_title_color(theme.main_text_color(theme.background()).into())
+            .with_path_color(theme.sub_text_color(theme.background()).into())
+            .with_style(fw_styles)
+            .build()
+            .finish();
+
+            let mut header_row = Flex::row()
+                .with_main_axis_size(MainAxisSize::Max)
+                .with_cross_axis_alignment(CrossAxisAlignment::Center)
+                .with_main_axis_alignment(MainAxisAlignment::SpaceBetween);
+            header_row.add_child(Shrinkable::new(1., header_inner).finish());
+
+            let make_icon_button =
+                |label: &'static str, action: WorkspaceAction| -> Box<dyn Element> {
+                    let text = Text::new(
+                        std::borrow::Cow::Borrowed(label),
+                        appearance.ui_font_family(),
+                        12.0,
+                    )
+                    .with_color(theme.sub_text_color(theme.background()).into())
+                    .finish();
+                    EventHandler::new(
+                        Container::new(text)
+                            .with_padding(Padding::uniform(4.))
+                            .finish(),
+                    )
+                    .on_left_mouse_down(move |ctx, _, _| {
+                        ctx.dispatch_typed_action(action.clone());
+                        DispatchEventResult::StopPropagation
+                    })
+                    .finish()
+                };
+
+            let mut buttons_row = Flex::row()
+                .with_main_axis_size(MainAxisSize::Min)
+                .with_cross_axis_alignment(CrossAxisAlignment::Center)
+                .with_spacing(2.);
+            buttons_row.add_child(make_icon_button(
+                "✎",
+                WorkspaceAction::RenameFolderWorkspace { id: fw_id },
+            ));
+            buttons_row.add_child(make_icon_button(
+                "↑",
+                WorkspaceAction::MoveFolderWorkspaceUp { id: fw_id },
+            ));
+            buttons_row.add_child(make_icon_button(
+                "↓",
+                WorkspaceAction::MoveFolderWorkspaceDown { id: fw_id },
+            ));
+            buttons_row.add_child(make_icon_button(
+                "✕",
+                WorkspaceAction::DeleteFolderWorkspace { id: fw_id },
+            ));
+            header_row.add_child(buttons_row.finish());
+
+            let header_clickable = EventHandler::new(header_row.finish())
                 .on_left_mouse_down(move |ctx, _, _| {
                     ctx.dispatch_typed_action(
                         WorkspaceAction::ToggleFolderWorkspaceCollapsed { id: fw_id },
                     );
+                    DispatchEventResult::StopPropagation
+                })
+                .on_right_mouse_down(move |ctx, _, _| {
+                    let script = "try\n    set choice to choose from list {\"Rename\", \"Move Up\", \"Move Down\", \"Delete\"} with prompt \"Folder workspace\"\n    if choice is false then\n        \"\"\n    else\n        item 1 of choice\n    end if\non error\n    \"\"\nend try";
+                    let out = std::process::Command::new("osascript")
+                        .args(["-e", script])
+                        .output();
+                    if let Ok(o) = out {
+                        let raw = String::from_utf8_lossy(&o.stdout).trim().to_string();
+                        let action = match raw.as_str() {
+                            "Rename" => Some(WorkspaceAction::RenameFolderWorkspace {
+                                id: fw_id,
+                            }),
+                            "Move Up" => Some(WorkspaceAction::MoveFolderWorkspaceUp {
+                                id: fw_id,
+                            }),
+                            "Move Down" => Some(WorkspaceAction::MoveFolderWorkspaceDown {
+                                id: fw_id,
+                            }),
+                            "Delete" => Some(WorkspaceAction::DeleteFolderWorkspace {
+                                id: fw_id,
+                            }),
+                            _ => None,
+                        };
+                        if let Some(a) = action {
+                            ctx.dispatch_typed_action(a);
+                        }
+                    }
                     DispatchEventResult::StopPropagation
                 })
                 .finish();
@@ -2590,7 +2674,8 @@ fn render_pane_row(props: PaneProps<'_>, app: &AppContext) -> Box<dyn Element> {
             .with_spacing(2.)
             .with_child(title_row.finish());
 
-        if !effective_subtitle.is_empty() {
+        let folder_minimal = FeatureFlag::FolderWorkspacesEnabled.is_enabled();
+        if !effective_subtitle.is_empty() && !folder_minimal {
             let subtitle_clip = if matches!(props.typed, TypedPane::Code(_)) {
                 ClipConfig::start()
             } else {
@@ -3334,7 +3419,12 @@ fn render_terminal_row_content(
     let theme = appearance.theme();
     let main_text_color = theme.main_text_color(theme.background());
     let sub_text_color = theme.sub_text_color(theme.background());
-    let primary_info = *TabSettings::as_ref(app).vertical_tabs_primary_info.value();
+    let folder_minimal = FeatureFlag::FolderWorkspacesEnabled.is_enabled();
+    let primary_info = if folder_minimal {
+        VerticalTabsPrimaryInfo::Command
+    } else {
+        *TabSettings::as_ref(app).vertical_tabs_primary_info.value()
+    };
 
     let title_text = terminal_view.terminal_title_from_shell();
     let working_directory = terminal_view
@@ -3453,21 +3543,25 @@ fn render_terminal_row_content(
         .with_main_axis_size(MainAxisSize::Min)
         .with_cross_axis_alignment(CrossAxisAlignment::Start);
     content.add_child(first_line_element);
-    content.add_child(Container::new(second_line).with_margin_top(2.).finish());
-    content.add_child(
-        Container::new(render_terminal_metadata_line(
-            terminal_view,
-            props.pane_group_id,
-            props.pane_id,
-            metadata_left,
-            chip_entrypoint_for_granularity(props.display_granularity),
-            &props.badge_mouse_states,
-            appearance,
-            app,
-        ))
-        .with_margin_top(2.)
-        .finish(),
-    );
+    if !folder_minimal {
+        content.add_child(Container::new(second_line).with_margin_top(2.).finish());
+        content.add_child(
+            Container::new(render_terminal_metadata_line(
+                terminal_view,
+                props.pane_group_id,
+                props.pane_id,
+                metadata_left,
+                chip_entrypoint_for_granularity(props.display_granularity),
+                &props.badge_mouse_states,
+                appearance,
+                app,
+            ))
+            .with_margin_top(2.)
+            .finish(),
+        );
+    } else {
+        let _ = (second_line, metadata_left);
+    }
     content.finish()
 }
 

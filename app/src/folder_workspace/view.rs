@@ -1,12 +1,9 @@
 //! WarpUI render component for folder workspace headers.
 //!
-//! T7 baseline: hardcoded data via `FolderWorkspaceHeader::new(name, tab_names)`,
-//! styling via `UiComponentStyles` (caller supplies fonts / colors). T8 wires
-//! the real [`super::manager::get_all`] result + workspace.tabs into this
-//! component within the sidebar render path.
-//!
-//! Pattern source: [`crate::ui_components::WrappableText`](super::super::ui_components)
-//! + render_tab_group in `vertical_tabs.rs:1696`.
+//! Renders a 2-line header: line 1 has the disclosure arrow, folder icon,
+//! workspace name, tab count, and missing-folder warning; line 2 shows the
+//! folder path in a secondary color. The host (vertical_tabs.rs) is responsible
+//! for the click handler that toggles collapse and the hover icon button row.
 
 use std::borrow::Cow;
 
@@ -15,29 +12,45 @@ use warpui::elements::{
 };
 use warpui::ui_components::components::{UiComponent, UiComponentStyles};
 
-/// A collapsible sidebar group: workspace name + indented tab rows.
-///
-/// `tab_names` is plain strings for now; in T8/T10 the integration layer
-/// renders real `TabData` rows and passes the workspace name from
-/// [`super::FolderWorkspace`].
+use pathfinder_color::ColorU;
+
+const HEADER_TITLE_FONT_SIZE: f32 = 14.0;
+const HEADER_PATH_FONT_SIZE: f32 = 11.0;
+
 #[derive(Debug, Clone, Default)]
 pub struct FolderWorkspaceHeader {
     name: String,
-    tab_names: Vec<String>,
+    path: String,
+    tab_count: usize,
     collapsed: bool,
     folder_missing: bool,
+    title_color: Option<ColorU>,
+    path_color: Option<ColorU>,
     styles: UiComponentStyles,
 }
 
 impl FolderWorkspaceHeader {
-    pub fn new(name: String, tab_names: Vec<String>) -> Self {
+    pub fn new(name: String) -> Self {
         Self {
             name,
-            tab_names,
+            path: String::new(),
+            tab_count: 0,
             collapsed: false,
             folder_missing: false,
+            title_color: None,
+            path_color: None,
             styles: UiComponentStyles::default(),
         }
+    }
+
+    pub fn with_path(mut self, path: String) -> Self {
+        self.path = path;
+        self
+    }
+
+    pub fn with_tab_count(mut self, count: usize) -> Self {
+        self.tab_count = count;
+        self
     }
 
     pub fn with_collapsed(mut self, collapsed: bool) -> Self {
@@ -47,6 +60,16 @@ impl FolderWorkspaceHeader {
 
     pub fn with_folder_missing(mut self, missing: bool) -> Self {
         self.folder_missing = missing;
+        self
+    }
+
+    pub fn with_title_color(mut self, color: ColorU) -> Self {
+        self.title_color = Some(color);
+        self
+    }
+
+    pub fn with_path_color(mut self, color: ColorU) -> Self {
+        self.path_color = Some(color);
         self
     }
 }
@@ -59,44 +82,45 @@ impl UiComponent for FolderWorkspaceHeader {
         let font_family = styles
             .font_family_id
             .expect("FolderWorkspaceHeader requires font_family_id (set via with_style)");
-        let font_size = styles.font_size.unwrap_or_default();
 
         let arrow = if self.collapsed { "▸" } else { "▾" };
         let warn = if self.folder_missing { " ⚠" } else { "" };
-        let header_text = Text::new(
-            Cow::Owned(format!("{} {}{}", arrow, self.name, warn)),
+        let count_suffix = if self.tab_count > 0 {
+            format!(" ({})", self.tab_count)
+        } else {
+            String::new()
+        };
+        let title_label = format!("{} 📁 {}{}{}", arrow, self.name, count_suffix, warn);
+
+        let mut title_text = Text::new(
+            Cow::Owned(title_label),
             font_family,
-            font_size,
-        )
-        .finish();
+            HEADER_TITLE_FONT_SIZE,
+        );
+        if let Some(color) = self.title_color {
+            title_text = title_text.with_color(color);
+        }
 
         let mut col = Flex::column()
             .with_main_axis_size(MainAxisSize::Min)
-            .with_cross_axis_alignment(CrossAxisAlignment::Stretch);
+            .with_cross_axis_alignment(CrossAxisAlignment::Stretch)
+            .with_spacing(2.);
 
-        col.add_child(
-            Container::new(header_text)
-                .with_padding(Padding::uniform(4.))
-                .finish(),
-        );
+        col.add_child(title_text.finish());
 
-        if !self.collapsed {
-            for tab_name in self.tab_names {
-                let row_text = Text::new(
-                    Cow::Owned(format!("• {}", tab_name)),
-                    font_family,
-                    font_size,
-                )
-                .finish();
-                col.add_child(
-                    Container::new(row_text)
-                        .with_padding(Padding::uniform(2.).with_left(20.))
-                        .finish(),
-                );
+        if !self.path.is_empty() {
+            let mut path_text = Text::new(
+                Cow::Owned(self.path),
+                font_family,
+                HEADER_PATH_FONT_SIZE,
+            );
+            if let Some(color) = self.path_color {
+                path_text = path_text.with_color(color);
             }
+            col.add_child(path_text.finish());
         }
 
-        Container::new(col.finish())
+        Container::new(col.finish()).with_padding(Padding::uniform(8.))
     }
 
     fn with_style(self, styles: UiComponentStyles) -> Self {

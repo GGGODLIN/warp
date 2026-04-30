@@ -10839,9 +10839,7 @@ impl Workspace {
         }
         let fallback = crate::folder_workspace::FolderWorkspaceModel::handle(ctx)
             .as_ref(ctx)
-            .all()
-            .first()
-            .map(|fw| fw.id);
+            .last_active_id();
         if let Some(id) = fallback {
             self.tabs[idx].folder_workspace_id = Some(id);
         }
@@ -11843,6 +11841,20 @@ impl Workspace {
         };
 
         if new_index != current_index {
+            if FeatureFlag::FolderWorkspacesEnabled.is_enabled() {
+                let same_workspace = self
+                    .tabs
+                    .get(new_index)
+                    .and_then(|t| t.folder_workspace_id)
+                    == self
+                        .tabs
+                        .get(current_index)
+                        .and_then(|t| t.folder_workspace_id);
+                if !same_workspace {
+                    return;
+                }
+            }
+
             self.tabs.swap(new_index, current_index);
 
             // Update the active tab index if it was impacted by the swap
@@ -20362,6 +20374,7 @@ impl TypedActionView for Workspace {
                 crate::folder_workspace::FolderWorkspaceModel::handle(ctx).update(
                     ctx,
                     move |model, model_ctx| {
+                        model.set_last_active(id);
                         if let Err(err) = model.toggle_collapsed(id, model_ctx) {
                             log::warn!(
                                 "Failed to toggle folder workspace collapsed: {err}"
@@ -20393,6 +20406,92 @@ impl TypedActionView for Workspace {
                 let idx = self.active_tab_index;
                 if let Some(tab) = self.tabs.get_mut(idx) {
                     tab.folder_workspace_id = Some(workspace_id);
+                }
+                crate::folder_workspace::FolderWorkspaceModel::handle(ctx).update(
+                    ctx,
+                    move |model, _ctx| {
+                        model.set_last_active(workspace_id);
+                    },
+                );
+                ctx.notify();
+            }
+            RenameFolderWorkspace { id } => {
+                let id = *id;
+                let current_name = crate::folder_workspace::FolderWorkspaceModel::handle(ctx)
+                    .as_ref(ctx)
+                    .all()
+                    .iter()
+                    .find(|w| w.id == id)
+                    .map(|w| w.name.clone())
+                    .unwrap_or_default();
+                let escaped = current_name.replace('\\', "\\\\").replace('"', "\\\"");
+                let script = format!(
+                    "try\n    text returned of (display dialog \"New name:\" default answer \"{escaped}\")\non error\n    \"\"\nend try"
+                );
+                let result = std::process::Command::new("osascript")
+                    .args(["-e", &script])
+                    .output();
+                if let Ok(out) = result {
+                    let raw = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                    if !raw.is_empty() && raw != current_name {
+                        crate::folder_workspace::FolderWorkspaceModel::handle(ctx).update(
+                            ctx,
+                            move |model, model_ctx| {
+                                if let Err(err) = model.rename_workspace(id, &raw, model_ctx) {
+                                    log::warn!(
+                                        "Failed to rename folder workspace: {err}"
+                                    );
+                                }
+                            },
+                        );
+                    }
+                }
+                ctx.notify();
+            }
+            MoveFolderWorkspaceUp { id } => {
+                let id = *id;
+                crate::folder_workspace::FolderWorkspaceModel::handle(ctx).update(
+                    ctx,
+                    move |model, model_ctx| {
+                        if let Err(err) = model.move_workspace(id, -1, model_ctx) {
+                            log::warn!("Failed to move folder workspace up: {err}");
+                        }
+                    },
+                );
+                ctx.notify();
+            }
+            MoveFolderWorkspaceDown { id } => {
+                let id = *id;
+                crate::folder_workspace::FolderWorkspaceModel::handle(ctx).update(
+                    ctx,
+                    move |model, model_ctx| {
+                        if let Err(err) = model.move_workspace(id, 1, model_ctx) {
+                            log::warn!("Failed to move folder workspace down: {err}");
+                        }
+                    },
+                );
+                ctx.notify();
+            }
+            DeleteFolderWorkspace { id } => {
+                let id = *id;
+                let fallback_id = crate::folder_workspace::FolderWorkspaceModel::handle(ctx)
+                    .as_ref(ctx)
+                    .all()
+                    .iter()
+                    .find(|w| w.id != id)
+                    .map(|w| w.id);
+                crate::folder_workspace::FolderWorkspaceModel::handle(ctx).update(
+                    ctx,
+                    move |model, model_ctx| {
+                        if let Err(err) = model.delete_workspace(id, model_ctx) {
+                            log::warn!("Failed to delete folder workspace: {err}");
+                        }
+                    },
+                );
+                for tab in self.tabs.iter_mut() {
+                    if tab.folder_workspace_id == Some(id) {
+                        tab.folder_workspace_id = fallback_id;
+                    }
                 }
                 ctx.notify();
             }

@@ -150,6 +150,18 @@ pub enum WorkspaceAction {
         folder_workspace_id: i32,
         path: PathBuf,
     },
+    RenameFolderWorkspace {
+        id: i32,
+    },
+    MoveFolderWorkspaceUp {
+        id: i32,
+    },
+    MoveFolderWorkspaceDown {
+        id: i32,
+    },
+    DeleteFolderWorkspace {
+        id: i32,
+    },
     AddTerminalTab {
         hide_homepage: bool,
     },
@@ -747,6 +759,10 @@ impl WorkspaceAction {
             | AddFolderWorkspace { .. }
             | ToggleFolderWorkspaceCollapsed { .. }
             | AddTabToFolderWorkspace { .. }
+            | RenameFolderWorkspace { .. }
+            | MoveFolderWorkspaceUp { .. }
+            | MoveFolderWorkspaceDown { .. }
+            | DeleteFolderWorkspace { .. }
             | AddTerminalTab { .. }
             | AddTabWithShell { .. }
             | AddGetStartedTab
