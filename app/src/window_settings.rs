@@ -79,6 +79,15 @@ define_settings_group!(WindowSettings, settings: [
         toml_path: "appearance.window.zoom_level",
         description: "The zoom level for the window, as a percentage.",
     },
+    close_to_menu_bar: CloseToMenuBar {
+        type: bool,
+        default: false,
+        supported_platforms: SupportedPlatforms::MAC,
+        sync_to_cloud: SyncToCloud::Globally(RespectUserSyncSetting::Yes),
+        private: false,
+        toml_path: "appearance.window.close_to_menu_bar",
+        description: "On macOS, hide the window to a menu bar status item when closed instead of quitting. Cmd-Q still quits.",
+    },
 ]);
 
 impl ZoomLevel {
