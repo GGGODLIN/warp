@@ -737,3 +737,306 @@ UpdateFolderWorkspaceName { id: i32, name: String }
 ---
 
 **Phase 3 V2 update done — 2026-04-30 補。等 user 排優先序開做。**
+
+---
+
+## V3 Session — Per-folder default command (2026-04-30)
+
+> 對齊 [PRODUCT.md V3 增量規格](file:///Users/linhancheng/Desktop/projects/warp-fork/specs/sidebar-folder-workspaces/PRODUCT.md) + [TECH.md V3 增量技術規劃](file:///Users/linhancheng/Desktop/projects/warp-fork/specs/sidebar-folder-workspaces/TECH.md)。
+>
+> **目標**：cmux `~/.zshrc` zero-action auto-launch 路徑 port 到 wrap 內建。每個 folder workspace 可設 `default_command`，新 tab 開起來自動跑；新 ws 從全域 setting 帶預設值（`claude`）；alt-modifier / 右鍵 menu 單次 opt-out。
+
+### Task 25: V3.1 — Diesel migration + schema regen + model field
+
+**Description**:
+
+1. 新 migration `<ts>_folder_workspace_default_command/{up,down}.sql`
+2. up: `ALTER TABLE folder_workspaces ADD COLUMN default_command TEXT NULL`
+3. down: `ALTER TABLE folder_workspaces DROP COLUMN default_command`（SQLite ≥ 3.35 支援；若版本 < 3.35 改 rebuild table pattern）
+4. `crates/persistence/src/schema.rs` `folder_workspaces!` macro 加 `default_command -> Nullable<Text>`
+5. `app/src/folder_workspace/model.rs` `FolderWorkspace` struct 加 `default_command: Option<String>` field（Diesel `Queryable` / `Insertable` 自動處理 nullable）
+
+**Acceptance**:
+- [ ] `diesel migration run` 過
+- [ ] `diesel migration revert` 過
+- [ ] 再 forward 過
+- [ ] `cargo build` 過
+- [ ] inline test：構造 `FolderWorkspace` 帶 default_command Some/None → insert → query back → match
+
+**Verification**:
+- `cargo test app::folder_workspace::manager::tests::default_command_round_trip` 過
+- `git diff crates/persistence/src/schema.rs` 純加
+
+**Dependencies**: 無（V1/V2 既有 ws 的 default_command 自動為 NULL）
+
+**Files**: `crates/persistence/migrations/<ts>_folder_workspace_default_command/{up,down}.sql` + `crates/persistence/src/schema.rs` + `app/src/folder_workspace/model.rs` — 4 files
+
+**Scope**: S
+
+---
+
+### Task 26: V3.2 — Manager + entity setter
+
+**Description**:
+
+`app/src/folder_workspace/manager.rs` 加：
+```rust
+pub fn set_default_command(
+    conn: &mut SqliteConnection,
+    id: i32,
+    command: Option<String>,
+) -> QueryResult<usize>
+```
+
+`app/src/folder_workspace/entity.rs` 加：
+```rust
+pub fn set_default_command(
+    &self,
+    id: i32,
+    command: Option<String>,
+    ctx: &mut ModelContext<Self>,
+) -> Result<()>
+```
+
+走 ModelEvent path（如果 T21 已完成）或 fresh RW connection（spike 模式）。Update in-memory cache 然後 notify。
+
+**Acceptance**:
+- [ ] manager fn 接 `Option<String>`，None → 寫 NULL，Some(empty) → 寫 ""，Some(non-empty) → 寫該值
+- [ ] entity fn 同步 update in-memory cache
+- [ ] manager unit test cover 三種 Option<String> input
+
+**Verification**:
+- `cargo test` 過
+- 手動：呼叫 entity fn → query DB confirm 寫入
+
+**Dependencies**: T25
+
+**Files**: `app/src/folder_workspace/manager.rs` + `app/src/folder_workspace/entity.rs` — 2 files
+
+**Scope**: S
+
+---
+
+### Task 27: V3.3 — Settings 全域 default_command_for_new_folder_workspaces
+
+**Description**:
+
+1. Grep `pub struct .*Settings` / `UserPreferences` / `pref_field!` 找 wrap 既有 settings 結構（推測在 `crates/warp_core/src/user_preferences.rs` 或 `warpui_extras::user_preferences`）
+2. 加 `default_command_for_new_folder_workspaces: String` field，default `"claude"`
+3. Setting 進 `TomlBackedUserPreferences` 持久化路徑
+4. `AddFolderWorkspace` handler ([`workspace/view.rs`](file:///Users/linhancheng/Desktop/projects/warp-fork/app/src/workspace/view.rs))：建立 ws 時讀此 setting → 寫進 `default_command`
+5. 改 setting **不**影響既有 ws（既有 ws 已 freeze 自己的值）
+
+**Acceptance**:
+- [ ] Setting 加好，預設 `"claude"`
+- [ ] 建新 ws → DB 看到 `default_command = "claude"`
+- [ ] 改 setting 為 `"nvim"` → 再建一個 ws → DB 看到 `default_command = "nvim"`
+- [ ] 改 setting 不動既有 ws 的 default_command
+- [ ] Setting 設成空字串 → 新 ws default_command 為空（純 shell）
+
+**Verification**:
+- 手動：toggle setting → 建 ws → SQLite query confirm
+- restart wrap → setting 持久
+
+**Dependencies**: T25
+
+**Files**: settings struct file (T27 grep 確認) + `app/src/workspace/view.rs` (`AddFolderWorkspace` handler) — 2-3 files
+
+**Scope**: M
+
+---
+
+### Task 28: V3.4 — AddTabToFolderWorkspace handler 改用 LaunchConfig Template path
+
+**Description**:
+
+[`app/src/workspace/action.rs:151`](file:///Users/linhancheng/Desktop/projects/warp-fork/app/src/workspace/action.rs)：
+```rust
+AddTabToFolderWorkspace {
+    folder_workspace_id: i32,
+    path: PathBuf,
+    skip_default_command: bool,   // 新增
+}
+```
+
+既有兩處 dispatch ([`vertical_tabs.rs:1794`](file:///Users/linhancheng/Desktop/projects/warp-fork/app/src/workspace/view/vertical_tabs.rs), [`vertical_tabs.rs:1979`](file:///Users/linhancheng/Desktop/projects/warp-fork/app/src/workspace/view/vertical_tabs.rs)) 加 `skip_default_command: false`（暫時）。
+
+`workspace/view.rs:20504` handler 改寫：
+
+```rust
+let workspace = FolderWorkspaceModel::handle(ctx).as_ref(ctx).get(workspace_id).cloned();
+let default_command = workspace.and_then(|ws| ws.default_command);
+
+let layout = if !skip_default_command
+    && default_command.as_ref().is_some_and(|s| !s.is_empty())
+{
+    PanesLayout::Template(PaneTemplateType::PaneTemplate {
+        cwd: initial_directory.clone().unwrap_or_else(|| PathBuf::from(".")),
+        commands: vec![CommandTemplate { exec: default_command.unwrap() }],
+        is_focused: Some(true),
+        pane_mode: PaneMode::Terminal,
+        shell: None,
+    })
+} else {
+    PanesLayout::SingleTerminal(Box::new(NewTerminalOptions {
+        initial_directory,
+        ..Default::default()
+    }))
+};
+self.add_tab_with_pane_layout(layout, Arc::new(HashMap::new()), None, ctx);
+```
+
+**Acceptance**:
+- [ ] `skip_default_command` field 加好；既有兩處 dispatch 編譯過
+- [ ] ws 設 `default_command = "echo hi"` → 開新 tab → terminal 看到 `hi` output
+- [ ] ws 設 `default_command = "claude"` + 已裝 claude → 新 tab 自動進 claude
+- [ ] ws.default_command = None → 開新 tab 純 shell prompt（既有行為不變）
+- [ ] ws.default_command = "" → 同 None
+- [ ] Folder missing 時 fallback `$HOME` cwd 仍適用 Template path
+- [ ] command 結束（Ctrl+C / exit）→ shell prompt 回來，tab 不死
+
+**Verification**:
+- 手動：3 個 ws：(a) command=None (b) command="echo hi" (c) command="claude"
+  - (a) 純 shell ✓
+  - (b) 看到 `hi` ✓
+  - (c) claude 自動起 ✓ + Ctrl+C 後 shell prompt 回來 ✓
+
+**Dependencies**: T26
+
+**Files**: `app/src/workspace/action.rs` + `app/src/workspace/view.rs` (handler) + `app/src/workspace/view/vertical_tabs.rs` (兩處 dispatch) — 3 files
+
+**Scope**: M
+
+---
+
+### Task 29: V3.5 — Per-ws default_command inline editor
+
+**Description**:
+
+抄 P2 (T18) rename inline editor pattern。獨立 ViewHandle 跟 state flag 不共用。
+
+- `Workspace` 加 `folder_workspace_default_command_editor: ViewHandle<EditorView>`
+- `WorkspaceState` 加 `folder_workspace_default_command_being_edited: Option<i32>`
+- `vertical_tabs.rs` header 右鍵 menu 加「Set default command...」item（osascript "choose from list" 暫用，T23 P6 完成後改 inline menu）
+- 點 menu → dispatch `RenameFolderWorkspaceDefaultCommand { id }` action（命名跟 RenameFolderWorkspace 區隔）
+- Handler 進 edit mode：focus editor，pre-fill 現值
+- Editor commit (Enter / blur)：dispatch `SetFolderWorkspaceDefaultCommand { id, command }` → entity.set_default_command
+- Cancel (Escape)：退 edit mode，不寫 DB
+- 空字串 commit → 寫 None（不寫 ""）
+
+**Acceptance**:
+- [ ] 右鍵 ws header → 看到「Set default command...」item
+- [ ] Click → editor focus，pre-fill 現有值
+- [ ] 改字串 + Enter → DB update + in-memory update
+- [ ] Escape → 不變
+- [ ] Empty commit → DB 寫 NULL
+- [ ] Restart wrap → 設定持久
+
+**Verification**:
+- 手動：建 ws → 右鍵 set "claude" → 開 tab 確認 → 右鍵 set "" → 開 tab 純 shell
+- DB check：`SELECT default_command FROM folder_workspaces WHERE id=...`
+
+**Dependencies**: T26（entity setter 必須在），T18 rename editor pattern 可參考但不依賴
+
+**Files**: `app/src/workspace/view.rs` (editor view + handler) + `app/src/workspace/action.rs` + `app/src/workspace/view/vertical_tabs.rs` (header context menu) — 3 files
+
+**Scope**: M
+
+---
+
+### Task 30: V3.6 — Opt-out modifier key + 右鍵 menu
+
+**Description**:
+
+兩條 opt-out 路徑：
+
+**(a) Modifier key**：sidebar `+ New Tab` 按鈕 click handler 讀 modifier state：
+
+- Grep `EventHandler::on_left_mouse_down` 既有 modifier-aware usage（推測 wrap 有 `MouseDownEvent.modifiers` 之類）
+- 點按鈕 + Alt/Option held → dispatch `AddTabToFolderWorkspace { skip_default_command: true, ... }`
+
+**(b) 右鍵 menu**：`+ New Tab` 按鈕 wrap `EventHandler::on_right_mouse_down` → osascript "choose from list" 兩 option：「Open with default command」/「Open without default command」→ 對應 dispatch
+
+兩條路徑都改 `vertical_tabs.rs:1794` 跟 `:1979` 兩處 dispatch site。
+
+**Acceptance**:
+- [ ] `+ New Tab` 按鈕：⌥-click → 開 tab 不跑 default command
+- [ ] `+ New Tab` 按鈕：右鍵 → 兩 option menu 出現
+- [ ] 選「Open without default command」→ 不跑 command
+- [ ] 普通 click → 跑 default_command（行為不變）
+- [ ] opt-out 後 ws.default_command 沒被清掉（單次 only）
+
+**Verification**:
+- 手動：ws default_command = "echo hi"
+  - 點 + → 看到 `hi` ✓
+  - ⌥-點 + → 純 shell ✓
+  - 右鍵 + → 選 without → 純 shell ✓
+- DB check：opt-out 後 `default_command` 仍為 "echo hi" ✓
+
+**Dependencies**: T28 (`skip_default_command` field 必須在)
+
+**Files**: `app/src/workspace/view/vertical_tabs.rs` (兩處 dispatch + 右鍵 menu) — 1 file
+
+**Scope**: S（前提：modifier-aware click pattern 找得到）/ M（如果要新發明）
+
+---
+
+### Task 31: V3.7 — Tests + smoke
+
+**Description**:
+
+1. Manager unit tests：
+   - `set_default_command` Some / None / empty round-trip
+   - 既有 ws (default_command NULL) → set Some → query back
+2. Entity tests：
+   - `set_default_command` updates in-memory cache
+3. Smoke checklist（手動）：
+   - [ ] V3 Success Criteria PRODUCT.md 全部勾過
+   - [ ] flag-off 行為跟 V2 一致
+   - [ ] `./script/presubmit` 過
+4. Optional integration test（接 T24 框架）：
+   - 建 ws + setdefault_command + 開 tab + assert command 跑過
+
+**Acceptance**:
+- [ ] manager / entity 單元測試新增至少 4 個
+- [ ] 全 V3 Success Criteria checklist 過
+- [ ] presubmit 過
+
+**Verification**:
+- `cargo test app::folder_workspace::` 過
+- 手動 smoke
+
+**Dependencies**: T25-T30
+
+**Files**: `app/src/folder_workspace/{manager,entity}.rs` 內 tests — 2 files
+
+**Scope**: S
+
+---
+
+## V3 Phase Checkpoint
+
+- [ ] T25-T31 verified
+- [ ] PRODUCT.md V3 Success Criteria 全打勾
+- [ ] `./script/presubmit` 過
+- [ ] `cargo clippy --bin warp-oss --features gui --lib -- -D warnings` 0 warning
+- [ ] flag-off 行為跟 upstream 一致
+- [ ] 既有 V1/V2 ws default_command 為 NULL → 行為不變（regression net）
+- [ ] **Human review** 才 close
+
+---
+
+## V3 Architecture Decisions（pre-implementation）
+
+1. **Borrow LaunchConfig CommandTemplate**：不重發明 spawn 路徑；wrap 既有 [`PanesLayout::Template`](file:///Users/linhancheng/Desktop/projects/warp-fork/app/src/pane_group/mod.rs) 滿足需求
+2. **`exec` 命名是 launch config schema string，不是 unix exec**：command 在 shell context 跑、結束後 shell prompt 回來 — 跟 cmux 教訓的「不要 `exec claude`」自動對齊
+3. **不需要 cmux 5 條 guard**：folder workspace 是顯式選擇，white-list 規則被「user 加 ws 動作」取代（PRODUCT.md V3 規格表已說明）
+4. **Settings 全域 default 不影響既有 ws**：寫進 ws.default_command 後 freeze；改 setting 只影響後續新建 ws
+5. **Opt-out 用 action payload field 不用 env var**：`AddTabToFolderWorkspace.skip_default_command: bool`；env var (`SKIP_DEFAULT_COMMAND`) 是 cmux 路線的延伸，wrap 內建 mode 不需要
+6. **Per-ws editor 抄 T18 pattern 但不共用 ViewHandle**：避免 rename / set-command 行為互踩
+7. **空字串 = None**：UI 上「清掉」default_command 用 commit empty string 即可；DB 內存 NULL（一致性）
+8. **Cmd+T 路徑暫不接 opt-out**：cmd+T 走 `AddTerminalTab` + `assign_default_folder_workspace_to_active_tab`，是事後 reassign 路徑，重接 opt-out 工程量大且 use case 不明顯；v4 評估
+
+---
+
+**Phase 3 V3 update done — 2026-04-30。Spec commit 後 user 排優先序開做。**

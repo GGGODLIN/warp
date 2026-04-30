@@ -355,3 +355,161 @@ AddFolderWorkspace { name, path }
 ---
 
 **V2 tech plan done — 2026-04-30 補。Awaiting Phase 3 TASKS.md update。**
+
+---
+
+# V3 增量技術規劃 — Per-folder default command（2026-04-30）
+
+> 對齊 [PRODUCT.md V3 增量規格](file:///Users/linhancheng/Desktop/projects/warp-fork/specs/sidebar-folder-workspaces/PRODUCT.md)。
+
+## 核心設計：借 LaunchConfig CommandTemplate
+
+wrap 已有「新 pane spawn 時跑 commands」基礎建設：
+
+- [`app/src/launch_configs/launch_config.rs:94-113`](file:///Users/linhancheng/Desktop/projects/warp-fork/app/src/launch_configs/launch_config.rs)：`PaneTemplateType::PaneTemplate { cwd, commands: Vec<CommandTemplate>, ... }`
+- [`app/src/launch_configs/launch_config.rs:218-221`](file:///Users/linhancheng/Desktop/projects/warp-fork/app/src/launch_configs/launch_config.rs)：`CommandTemplate { exec: String }`（命名 `exec` 是 launch config schema 字串欄位，不是 unix exec syscall）
+- [`app/src/pane_group/mod.rs:813`](file:///Users/linhancheng/Desktop/projects/warp-fork/app/src/pane_group/mod.rs)：`PanesLayout::Template(PaneTemplateType)` 是 `add_tab_with_pane_layout` 接受的 layout type
+- 既有 callsite：[`workspace/view.rs:3595`](file:///Users/linhancheng/Desktop/projects/warp-fork/app/src/workspace/view.rs) + [`workspace/view.rs:6395`](file:///Users/linhancheng/Desktop/projects/warp-fork/app/src/workspace/view.rs) 透過 LaunchConfig 開 tab 都走這條
+
+→ V3 只要在 `AddTabToFolderWorkspace` handler 內，`default_command` 有值時改用 `PanesLayout::Template(PaneTemplateType::PaneTemplate { cwd, commands: vec![CommandTemplate { exec: cmd }], ... })`。**不用碰任何 spawn / exec / shell integration code**。
+
+## V3 待做組件
+
+### 1. DB schema 增量
+
+- Migration `<ts>_folder_workspace_default_command/`：
+  ```sql
+  -- up.sql
+  ALTER TABLE folder_workspaces ADD COLUMN default_command TEXT NULL;
+
+  -- down.sql
+  ALTER TABLE folder_workspaces DROP COLUMN default_command;
+  ```
+- `crates/persistence/src/schema.rs`：`folder_workspaces!` macro 加 `default_command -> Nullable<Text>`
+- 注意 SQLite `ALTER TABLE DROP COLUMN` 從 SQLite 3.35（2021-03）才支援，warp `rust-toolchain.toml` SQLite 版本要先確認；若不支援要走 rebuild table pattern
+
+### 2. Model + Manager
+
+- `app/src/folder_workspace/model.rs`：`FolderWorkspace` struct 加 `default_command: Option<String>` field
+- `app/src/folder_workspace/manager.rs`：
+  ```rust
+  set_default_command(conn, id, command: Option<String>) -> QueryResult<usize>
+  ```
+- `app/src/folder_workspace/entity.rs`：
+  ```rust
+  set_default_command(id, command: Option<String>, ctx) -> Result<()>
+  ```
+
+### 3. Settings 全域預設值
+
+- `crates/warp_core/src/user_preferences.rs`（或對應 settings struct）加 `default_command_for_new_folder_workspaces: String` field，default `"claude"`
+- T27 先 grep `pub struct .*Settings` / `UserPreferences` 找正確 location；wrap settings infra：
+  - `warp_core::user_preferences::GetUserPreferences` trait
+  - `warpui_extras::user_preferences::UserPreferences` 實作
+  - `warpui_extras::user_preferences::toml_backed::TomlBackedUserPreferences` 是 disk-backed impl
+- 建立 ws 流程（`AddFolderWorkspace` handler）讀此 setting → 寫進新 ws.default_command
+
+### 4. AddTabToFolderWorkspace handler 改寫
+
+[`app/src/workspace/view.rs:20504-20557`](file:///Users/linhancheng/Desktop/projects/warp-fork/app/src/workspace/view.rs) 現況：
+
+```rust
+self.add_tab_with_pane_layout(
+    PanesLayout::SingleTerminal(Box::new(NewTerminalOptions {
+        initial_directory,
+        ..Default::default()
+    })),
+    ...
+);
+```
+
+V3 改寫：
+
+```rust
+let workspace = FolderWorkspaceModel::handle(ctx).as_ref(ctx).get(workspace_id);
+let default_command = workspace.and_then(|ws| ws.default_command.clone());
+
+// skip_default_command 從 action payload 來（見組件 5）
+let layout = if !skip_default_command && default_command.as_ref().map_or(false, |s| !s.is_empty()) {
+    PanesLayout::Template(PaneTemplateType::PaneTemplate {
+        cwd: initial_directory.unwrap_or_else(|| PathBuf::from(".")),
+        commands: vec![CommandTemplate { exec: default_command.unwrap() }],
+        is_focused: Some(true),
+        pane_mode: PaneMode::Terminal,
+        shell: None,
+    })
+} else {
+    PanesLayout::SingleTerminal(Box::new(NewTerminalOptions {
+        initial_directory,
+        ..Default::default()
+    }))
+};
+self.add_tab_with_pane_layout(layout, Arc::new(HashMap::new()), None, ctx);
+```
+
+### 5. AddTabToFolderWorkspace action 加 opt-out flag
+
+[`app/src/workspace/action.rs:151`](file:///Users/linhancheng/Desktop/projects/warp-fork/app/src/workspace/action.rs)：
+
+```rust
+AddTabToFolderWorkspace {
+    folder_workspace_id: i32,
+    path: PathBuf,
+    skip_default_command: bool,   // ← 新增；既有 callsite 全填 false
+}
+```
+
+既有 dispatch site（`vertical_tabs.rs:1794, 1979`）兩處改加 `skip_default_command: false`。Modifier key / 右鍵 menu 路徑 dispatch 時填 `true`。
+
+### 6. UI plumbing
+
+#### 6.1 Per-ws default_command edit UI
+
+兩條路徑（T29 實作時擇一或都做）：
+
+- **(a) 右鍵 menu** 加「Set default command...」→ dispatch `RenameFolderWorkspaceDefaultCommand { id }` action → 進 inline editor mode（抄 P2/T18 rename inline editor pattern；獨立 `folder_workspace_default_command_editor: ViewHandle<EditorView>`）
+- **(b) Settings → Folder Workspaces 子頁** 列出所有 ws 跟可編輯 default_command 欄位
+
+v3 先做 (a)，(b) 留 v4 polish。
+
+#### 6.2 Opt-out UI
+
+- **Modifier key**：sidebar `+ New Tab` 按鈕的 click handler 在 dispatch 時讀 `ctx.modifiers()` → 若 alt/option 按下 → `skip_default_command: true`
+- **右鍵 menu**：`+ New Tab` 按鈕 wrap `EventHandler::on_right_mouse_down` → osascript "choose from list" 跳「Open with default command / Open without default command」（osascript 仍是 spike-friendly fallback；P6/T23 完成後可改 inline menu）
+
+### 7. Settings UI（S7）
+
+- 找 wrap 既有 settings UI 加 string editor pattern（grep `text_input` / `string_setting` / `pref_input`）
+- 設定改動寫回 user prefs file（`toml_backed` 處理）
+- 改設定不需 broadcast event 到既有 ws（既有 ws 已 freeze 自己的 default_command）
+
+## V3 Risks & Mitigation
+
+| 風險 | 影響 | 緩解 |
+|---|---|---|
+| SQLite ADD/DROP COLUMN 版本問題 | migration 失敗 | up.sql 用 ADD COLUMN 沒問題；down.sql 若 SQLite 版本 < 3.35 要 rebuild table — `cargo test` migration round-trip 強制驗 |
+| `PanesLayout::Template` cwd 必填、Folder missing 時 fallback `$HOME` 也要傳對 | 開 tab 在錯誤目錄 | 既有 fallback 邏輯保留（line 20510-20514），只是 layout 變數型別改 |
+| `CommandTemplate.exec` 是 `exec` 命名引起混淆 | 怕 spawn 取代 shell | 確認既有 callsite 行為：`exec` 字串是「shell 執行此 command」，shell 結束 command 不取代 shell — 已在 launch_config_tests.rs 看到使用 |
+| Modifier key 在 click handler 內讀不到（wrap UI 框架限制） | opt-out 失效 | T30 先 spike：找個 wrap 既有 modifier-aware click 範例參考；找不到 fallback 純右鍵 menu |
+| Per-ws editor 跟 P2 rename editor view 互踩 | rename 跟 set-command 行為混亂 | 獨立 ViewHandle + 獨立 WorkspaceState flag（同 P2 自己抄 tab_rename_editor 的處理）|
+| 設定 default 改成 `claude` 但 user 沒裝 claude → 新 tab 顯示 `command not found` | UX 警告不足 | 接受此行為；user 會自己看到 error 然後改 setting；不做 path validation |
+
+## V3 Implementation Order
+
+| Step | Item | Verification |
+|---|---|---|
+| 1 | DB migration + schema regen + model field | `diesel migration run/revert` 來回過、`cargo build` 過、unit test (round-trip insert/query default_command) 過 |
+| 2 | Manager + entity setter (`set_default_command`) | unit test 過 |
+| 3 | AddTabToFolderWorkspace.skip_default_command field 加（既有 callsite 全填 false） | `cargo build` 過、行為不變 |
+| 4 | Handler 改寫（讀 ws.default_command → 走 Template path 或 SingleTerminal path） | flag on + ws 設 default_command="echo hi"+ 開 tab → tab 看到 `hi` |
+| 5 | Settings 全域 `default_command_for_new_folder_workspaces`（"claude" default） | grep settings infra → 加 field → AddFolderWorkspace handler 讀 setting 寫進新 ws → restart 後 setting 持久 |
+| 6 | Per-ws default_command inline editor（右鍵 menu 進 mode） | 設 "echo hi" → 開 tab → 跑 |
+| 7 | Opt-out modifier key + 右鍵 menu | ⌥-click 開 tab → 純 shell；右鍵 → 看到「Open without default command」|
+| 8 | Settings UI（在 Settings 看到 string field） | 改 setting → 新 ws 帶新值 |
+| 9 | Tests：lifecycle + opt-out + setting inheritance | manager unit + entity unit + smoke through full UI |
+
+Step 1-4 是核心路徑（不做完功能不 work），Step 5 是 quality of life，Step 6-8 是 UI plumb，Step 9 是 regression net。
+
+---
+
+**V3 tech plan done — 2026-04-30。Awaiting TASKS.md V3 update。**

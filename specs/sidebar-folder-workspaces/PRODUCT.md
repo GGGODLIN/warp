@@ -279,4 +279,77 @@ if FeatureFlag::FolderWorkspacesEnabled.is_enabled() {
 
 ---
 
+# V3 增量規格 — Per-folder default command（2026-04-30）
+
+> **Why**: cmux 工作流程 port 到 wrap 的最後一塊。cmux 使用者主要靠 `~/.zshrc` 的 zero-action auto-launch 在 mux pane + cwd 白名單時自動 spawn `claude`；wrap 改成「**workspace 是顯式選擇 → 把 default command 掛在 workspace setting**」，比 cmux 路徑前綴白名單語意更明確。
+>
+> **設計核心**：cmux 5 條 guard（`$CMUX_WORKSPACE_ID` / `$TERM_PROGRAM` / `$CMUX_SKIP_CLAUDE` / `$- == *i*` / cwd 白名單）在 wrap 內建模式**全部不需要復刻**，理由見下表。
+
+| cmux guard | wrap 對應 | 取代方式 |
+|---|---|---|
+| `$CMUX_WORKSPACE_ID` 非空 | wrap 自己 spawn tab 必在 wrap 內 | 不需 |
+| `$TERM_PROGRAM == "ghostty"` 防 env inherit | 同上，不靠 env 傳遞 | 不需 |
+| `$- == *i*` interactive shell | wrap spawn 必為 interactive | 不需 |
+| cwd 白名單 | folder workspace 已是顯式選擇 | 由 user 加 ws 取代 |
+| `$CMUX_SKIP_CLAUDE` opt-out | per-tab opt-out | Modifier key / 右鍵 menu |
+
+## V3 user stories
+
+### S6 Per-workspace default command（必做）
+
+- 每個 folder workspace 可設一個 `default_command`（字串，可 None）
+- 在該 workspace 開新 tab 時，shell 起來後**自動跑 `default_command`**
+- 預設值由全域 setting 決定（見 S7）
+- **不能用 `exec` 取代 shell**：command 結束後 shell 必須仍存活、prompt 回來；wrap 既有 LaunchConfig `CommandTemplate` 路徑滿足此需求
+- Empty / None default_command → 行為跟現在一樣（純 shell prompt）
+
+### S7 Settings：新 workspace 預設 default command（必做）
+
+- Settings 加 `default_command_for_new_folder_workspaces`（字串，預設 `"claude"`）
+- 建立新 folder workspace 時，`default_command` 自動帶該 setting 值
+- 改 setting 不影響既有 workspace（既有 ws 自己的 default_command 已存 DB）
+- 設成空字串 → 新 ws 預設不跑任何 command
+
+### S8 Opt-out：開 tab 時跳過 default command（必做）
+
+- 即使 workspace 設了 default_command，使用者要能單次跳過：
+  - **Modifier key**：⌥-click `+ New Tab` 或 ⌥-Cmd+T → 跳過
+  - **右鍵 menu**：`+ New Tab` 按鈕右鍵 → 「Open without default command」
+- 跳過時行為等同 default_command = 空（純 shell）
+- 設定 default_command 後 default 行為仍為「自動跑」，opt-out 是顯式
+
+## V3 不在範圍內
+
+- Per-tab override（一個 ws 內不同 tab 跑不同 command）— 過度設計
+- Multi-command（連續跑多個 command）— LaunchConfig CommandTemplate Vec 結構支援，但 v3 只接 1 command
+- Pane split 各跑不同 command（cmux multi-pane workflow）— 需要更深整合，先看 v3 落地反饋
+- Command 模板變數（`{{cwd}}` / `{{branch}}`）— 過度設計
+- Per-OS / per-shell 不同 default command — 過度設計
+
+## V3 Open Questions
+
+- **Settings UI 位置**：放 Settings → Features → Folder Workspaces 子分頁？還是 Subsettings 內 inline？— T27 grep 既有 settings 結構決定
+- **Opt-out 在 cmd+T 開 tab 時的觸發路徑**：cmd+T 在 wrap 是 `AddTerminalTab` action 不是 `AddTabToFolderWorkspace`，`assign_default_folder_workspace_to_active_tab` 是事後 reassign — opt-out 要在這條路徑也支援嗎？v3 先只 cover sidebar 內 `+ New Tab` 路徑，cmd+T 的 reassign 路徑不接 opt-out（v4 再評估）
+- **Per-ws default_command edit UI**：抄 P2 inline editor pattern（T18）做一個 default_command editor？還是 reuse 同一個 ViewHandle？— T29 實作時看狀況
+
+## V3 Success Criteria
+
+- [ ] **S6** Workspace `default_command` 設成 `claude` → 新 tab 開起 → claude 自動 spawn 在 prompt
+- [ ] **S6** Command 結束（Ctrl+C 或 exit）→ shell prompt 回來，tab 不死
+- [ ] **S6** `default_command` 為 None / 空 → 新 tab 純 shell（無自動 spawn）
+- [ ] **S6** 既有 workspace（V1/V2 建的）`default_command = NULL` → 行為不變
+- [ ] **S7** Settings 預設 `default_command_for_new_folder_workspaces = "claude"`
+- [ ] **S7** 改 setting 為 `nvim`、新增 ws → 新 ws default_command = `nvim`
+- [ ] **S7** 改 setting 不影響既有 ws
+- [ ] **S8** ⌥-click `+ New Tab` → 跳過 default_command（純 shell）
+- [ ] **S8** 右鍵 `+ New Tab` → 「Open without default command」選項可用
+- [ ] **S8** opt-out 不會清掉 ws.default_command（單次跳過 only）
+- [ ] **Quality**：DB schema migration 來回過、`./script/presubmit` 過、新 code 80% coverage、flag-off 行為跟 upstream 一致
+
+---
+
+**V3 spec done — 2026-04-30。Awaiting TECH.md V3 + TASKS.md V3 update + commit + 開做。**
+
+---
+
 **Phase 1 done. Awaiting human review before Phase 2 (PLAN).**
