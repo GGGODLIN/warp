@@ -92,7 +92,17 @@ lazy_static! {
     /// we're not in a valid URL. Other characters (e.g. '%') might be used in such a way that they
     /// result in invalid URLs, but we don't halt detection if we find them.
     /// See https://datatracker.ietf.org/doc/html/rfc3986 for more details.
-    static ref URL_SEPARATORS: HashSet<char> = HashSet::from([' ', '<', '>', '"', '{', '}', '|', '\\', '^', '`']);
+    // Fork divergence: upstream stops only on ASCII separators, so a URL followed
+    // by CJK fullwidth punctuation (e.g. "...issues/8919、越南文") swallows the
+    // trailing Chinese text. CJK ideographs in URL paths still work — only
+    // standalone fullwidth punctuation marks are added as boundaries.
+    static ref URL_SEPARATORS: HashSet<char> = HashSet::from([
+        ' ', '<', '>', '"', '{', '}', '|', '\\', '^', '`',
+        '\u{3000}',
+        '、', '，', '。', '？', '！', '：', '；',
+        '（', '）', '「', '」', '『', '』', '【', '】',
+        '《', '》', '〈', '〉', '〔', '〕',
+    ]);
 }
 
 /// Represents a range of cells with information on their combined content and total
