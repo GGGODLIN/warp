@@ -1043,6 +1043,60 @@ self.add_tab_with_pane_layout(layout, Arc::new(HashMap::new()), None, ctx);
 
 ---
 
+## V3 Session Outcome (2026-04-30)
+
+V3 7 tasks 全交付，feat/folder-workspaces 上 commits：
+
+| Task | Commit | 內容 |
+|---|---|---|
+| T25 DB schema + model field | `f8803c1` | migration + schema.rs + FolderWorkspace.default_command + 2 new round-trip tests |
+| T26 manager + entity setter | `0f5d089` | manager::set_default_command + ModelEvent::UpdateFolderWorkspaceDefaultCommand + entity::set_default_command + 2 new tests |
+| T27 全域 setting | `56e561f` | FolderWorkspaceSettings group + InsertFolderWorkspace.default_command threading + AddFolderWorkspace handler reads setting |
+| T27 fix | `b8f3e91` | hotfix — register FolderWorkspaceSettings in init.rs (T27 漏了 → 加 ws 時 panic) |
+| T28 LaunchConfig Template path | `180a519` | AddTabToFolderWorkspace.skip_default_command + handler routes through PanesLayout::Template when default_command set |
+| T29 inline editor | `0b0d25f` | folder_workspace_default_command_editor + state field + finish/cancel/edit fns + 右鍵 menu「Set default command...」+ header path-slot 替換 editor |
+| T30 opt-out right-click | `5549478` | + New Tab 按鈕加 on_right_mouse_down osascript menu 兩 option |
+
+13 → 17 unit tests（manager + model + entity 都 cover default_command 路徑）。
+
+### Architecture decisions (vibe-coding 自主)
+
+1. **借 LaunchConfig CommandTemplate 不發明 spawn 路徑** — 確認 `exec` 是 schema string，shell spawn command 後不取代 shell（process tree 驗：claude 是 zsh 的 child）
+2. **set_default_command empty / None 都 normalize to NULL** — 一致性，UI 端 commit 空字串等同清值
+3. **inline editor 取代 path slot 不取代 title slot** — title 仍可見 user 知道編哪個 ws；rename mode 取代 title slot 兩者不衝突
+4. **⌥-modifier opt-out deferred V5+** — wrapui_core on_left_mouse_down callback 沒 modifier；plumb on_modifier_state_changed → state field → 讀回 工程量大，cmux user 也很少用 opt-out（zero-action 慣性）
+5. **osascript menu 沿用 V2 spike pattern** — P6 (T23) 一次性換成 native menu 兼顧 rename / set-cmd / opt-out 三處
+6. **既有 V1/V2 ws default_command=NULL 路徑保留 SingleTerminal layout** — flag-off / V3 升級前的 ws 行為不變（regression net）
+
+### V3 Success Criteria 驗證
+
+- [x] **S6** ws.default_command = `claude` → 新 tab 自動跑 claude（user 實測）
+- [x] **S6** Command 結束後 shell prompt 回來（process tree 證明：claude 是 zsh child + user 實測 `/quit` 後回 prompt）
+- [x] **S6** Empty default_command → 純 shell（測試 2 ✓）
+- [x] **S6** 既有 ws (V1/V2) default_command 為 NULL → SingleTerminal path 保留行為不變（邏輯保留 + 測試 1 改了 default_command 後 work，反向推論 NULL path 也 work；regression net via flag-off 路徑）
+- [x] **S7** Settings 預設 `claude`（user 實測：建新 ws 自動跑 claude）
+- [N/E] **S7** 改 setting 為 nvim → 新 ws 帶新值（邏輯確認，未端到端驗 — 改 toml 或 GUI settings 都該 work）
+- [N/E] **S7** 改 setting 不影響既有 ws（邏輯確認 — DB 內既有 ws.default_command 在 create 時 freeze）
+- [DEFERRED] **S8** ⌥-click → V5+
+- [x] **S8** 右鍵 + New Tab → 「Open without default command」→ 純 shell（測試 3 ✓）
+- [x] **S8** opt-out 不清 ws.default_command（單次跳過：測試 3 後 ws 仍帶 echo hi）
+- [x] **Quality** 17/17 unit tests + cargo build 過 + flag-off 路徑保留
+
+### V5+ 候選追蹤
+
+- ⌥-modifier opt-out（需 plumb on_modifier_state_changed）
+- Native context menu 取代 osascript（rename / set-cmd / new tab opt-out 三處）— 即原 P6 (T23)
+- `cmd+T` 路徑接 opt-out（事後 reassign 路徑，工程量大）
+- wrap 內輸入法 + Ctrl+C 互動 bug（user 實測時發現，跟 V3 無關，獨立 issue）
+
+### 下一輪建議
+
+V3 已 daily-driver-ready。V4「close to menu bar」spec 已 commit（`edfb5db`），new session 開做。
+
+**V3 phase done — 2026-04-30。**
+
+---
+
 ## V4 Session — Close to menu bar (2026-04-30)
 
 > 對齊 [PRODUCT.md V4 增量規格](file:///Users/linhancheng/Desktop/projects/warp-fork/specs/sidebar-folder-workspaces/PRODUCT.md) + [TECH.md V4 增量技術規劃](file:///Users/linhancheng/Desktop/projects/warp-fork/specs/sidebar-folder-workspaces/TECH.md)。
