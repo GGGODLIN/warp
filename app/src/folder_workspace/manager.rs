@@ -12,6 +12,31 @@ use crate::persistence::schema::{folder_workspaces, tabs};
 
 use super::model::{FolderWorkspace, NewFolderWorkspace};
 
+/// Insert a folder workspace row using the supplied id + display_order /
+/// collapsed (no max + 1 lookup). Used by the ModelEvent worker thread
+/// where the in-memory model already chose all values; explicit id
+/// keeps `tabs.folder_workspace_id` references consistent across the
+/// async write boundary.
+pub fn create_with_id_and_attrs(
+    conn: &mut SqliteConnection,
+    id: i32,
+    name: &str,
+    path: &str,
+    display_order: i32,
+    collapsed: bool,
+) -> QueryResult<usize> {
+    diesel::sql_query(
+        "INSERT INTO folder_workspaces (id, name, path, display_order, collapsed) \
+         VALUES (?, ?, ?, ?, ?)",
+    )
+    .bind::<diesel::sql_types::Integer, _>(id)
+    .bind::<diesel::sql_types::Text, _>(name)
+    .bind::<diesel::sql_types::Text, _>(path)
+    .bind::<diesel::sql_types::Integer, _>(display_order)
+    .bind::<diesel::sql_types::Bool, _>(collapsed)
+    .execute(conn)
+}
+
 /// Create a new folder workspace and return the persisted row (with id /
 /// created_ts populated by SQLite).
 pub fn create(
@@ -69,6 +94,7 @@ pub fn update_collapsed(
         .execute(conn)
 }
 
+#[cfg(test)]
 pub fn delete(conn: &mut SqliteConnection, id: i32) -> QueryResult<usize> {
     diesel::delete(folder_workspaces::table.find(id)).execute(conn)
 }

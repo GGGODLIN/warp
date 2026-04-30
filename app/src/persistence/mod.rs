@@ -63,8 +63,6 @@ use self::model::{AgentConversation, AgentConversationData, Project};
 pub use sqlite::database_file_path;
 #[cfg(any(feature = "local_fs", feature = "integration_tests"))]
 pub use sqlite::establish_ro_connection;
-#[cfg(any(feature = "local_fs", feature = "integration_tests"))]
-pub use sqlite::establish_rw_connection;
 
 /// Initializes the persistence "subsystem".
 ///
@@ -387,5 +385,30 @@ pub enum ModelEvent {
         content: String,
         version: i32,
         title: String,
+    },
+    InsertFolderWorkspace {
+        name: String,
+        path: String,
+        display_order: i32,
+        collapsed: bool,
+        // Tentative in-memory id assigned by the model; sqlite ignores it
+        // on insert (autoincrement), but bootstrap reload uses the real id.
+        tentative_id: i32,
+    },
+    UpdateFolderWorkspaceCollapsed {
+        id: i32,
+        collapsed: bool,
+    },
+    UpdateFolderWorkspaceName {
+        id: i32,
+        name: String,
+    },
+    UpdateFolderWorkspaceDisplayOrder {
+        id: i32,
+        display_order: i32,
+    },
+    DeleteFolderWorkspace {
+        id: i32,
+        fallback_id: Option<i32>,
     },
 }

@@ -1,13 +1,20 @@
 //! In-memory `SingletonEntity` for folder workspaces.
 //!
 //! Render path reads via [`warpui::AppContext::get_singleton_model_handle`];
-//! mutations route through `model_event_sender` (wired in T9). Loaded once at
-//! app init from [`PersistedData::folder_workspaces`](crate::persistence::PersistedData).
-//! Pattern: [`crate::projects::ProjectManagementModel`].
+//! mutations route through `model_event_sender` to the SQLite writer thread,
+//! matching the pattern used by `ProjectManagementModel` and other Warp
+//! singletons. Loaded once at app init from
+//! [`PersistedData::folder_workspaces`](crate::persistence::PersistedData).
+//!
+//! Tentative-id discipline: in-memory `id` for newly created workspaces is
+//! `max(existing.id) + 1`. The SQLite writer thread uses that same id when
+//! inserting (via raw SQL) so foreign keys in `tabs.folder_workspace_id`
+//! stay valid across the async write boundary.
 
 use std::collections::HashSet;
 use std::sync::mpsc::SyncSender;
 
+use chrono::Utc;
 use warpui::{Entity, ModelContext, SingletonEntity};
 
 use crate::persistence::ModelEvent;
@@ -15,6 +22,7 @@ use crate::persistence::ModelEvent;
 use super::FolderWorkspace;
 
 #[derive(Debug)]
+#[allow(dead_code, reason = "event variants emitted for downstream subscribers")]
 pub enum FolderWorkspaceEvent {
     Created { id: i32 },
     Updated { id: i32 },
@@ -23,7 +31,6 @@ pub enum FolderWorkspaceEvent {
 
 pub struct FolderWorkspaceModel {
     workspaces: Vec<FolderWorkspace>,
-    #[expect(unused, reason = "T9 will wire DB writes via ModelEvent variants")]
     model_event_sender: Option<SyncSender<ModelEvent>>,
     last_active_id: Option<i32>,
     toasted_missing_session: HashSet<i32>,
@@ -78,28 +85,57 @@ impl FolderWorkspaceModel {
         }
     }
 
-    /// Create a new folder workspace, persist via a fresh RW connection
-    /// (spike-pragmatic; see `establish_rw_connection` doc), update in-memory
-    /// state, emit `Created`. Logs and returns Err on DB failure without
-    /// mutating in-memory state, so the model stays consistent with persistence.
+    fn send_event(&self, event: ModelEvent) {
+        if let Some(sender) = &self.model_event_sender {
+            if let Err(err) = sender.send(event) {
+                log::warn!("Failed to enqueue folder workspace ModelEvent: {err}");
+            }
+        }
+    }
+
+    fn next_tentative_id(&self) -> i32 {
+        self.workspaces.iter().map(|w| w.id).max().unwrap_or(0) + 1
+    }
+
+    fn next_display_order(&self) -> i32 {
+        self.workspaces
+            .iter()
+            .map(|w| w.display_order)
+            .max()
+            .unwrap_or(-1)
+            + 1
+    }
+
     pub fn create_workspace(
         &mut self,
         name: &str,
         path: &std::path::Path,
         ctx: &mut ModelContext<Self>,
     ) -> anyhow::Result<i32> {
-        let database_path = crate::persistence::database_file_path();
-        let mut conn =
-            crate::persistence::establish_rw_connection(&database_path.to_string_lossy())?;
-        let workspace = super::manager::create(&mut conn, name, path)?;
-        let id = workspace.id;
+        let id = self.next_tentative_id();
+        let display_order = self.next_display_order();
+        let path_str = path.to_string_lossy().into_owned();
+        self.send_event(ModelEvent::InsertFolderWorkspace {
+            tentative_id: id,
+            name: name.to_string(),
+            path: path_str.clone(),
+            display_order,
+            collapsed: false,
+        });
+        let workspace = FolderWorkspace {
+            id,
+            name: name.to_string(),
+            path: path_str,
+            display_order,
+            collapsed: false,
+            created_ts: Utc::now().naive_utc(),
+        };
         self.workspaces.push(workspace);
+        self.last_active_id = Some(id);
         ctx.emit(FolderWorkspaceEvent::Created { id });
         Ok(id)
     }
 
-    /// Toggle the collapsed state of a workspace by id, persisting the new
-    /// value and emitting `Updated`. No-op if the id is unknown.
     pub fn toggle_collapsed(
         &mut self,
         id: i32,
@@ -109,11 +145,11 @@ impl FolderWorkspaceModel {
             return Ok(());
         };
         let new_value = !self.workspaces[idx].collapsed;
-        let database_path = crate::persistence::database_file_path();
-        let mut conn =
-            crate::persistence::establish_rw_connection(&database_path.to_string_lossy())?;
-        super::manager::update_collapsed(&mut conn, id, new_value)?;
         self.workspaces[idx].collapsed = new_value;
+        self.send_event(ModelEvent::UpdateFolderWorkspaceCollapsed {
+            id,
+            collapsed: new_value,
+        });
         ctx.emit(FolderWorkspaceEvent::Updated { id });
         Ok(())
     }
@@ -127,17 +163,15 @@ impl FolderWorkspaceModel {
         let Some(idx) = self.workspaces.iter().position(|w| w.id == id) else {
             return Ok(());
         };
-        let database_path = crate::persistence::database_file_path();
-        let mut conn =
-            crate::persistence::establish_rw_connection(&database_path.to_string_lossy())?;
-        super::manager::rename(&mut conn, id, new_name)?;
         self.workspaces[idx].name = new_name.to_string();
+        self.send_event(ModelEvent::UpdateFolderWorkspaceName {
+            id,
+            name: new_name.to_string(),
+        });
         ctx.emit(FolderWorkspaceEvent::Updated { id });
         Ok(())
     }
 
-    /// Swap display_order with the neighbor in the requested direction.
-    /// `delta = -1` moves up (towards index 0), `+1` moves down.
     pub fn move_workspace(
         &mut self,
         id: i32,
@@ -152,21 +186,22 @@ impl FolderWorkspaceModel {
             return Ok(());
         }
         let neighbor_idx = neighbor_idx as usize;
-        let database_path = crate::persistence::database_file_path();
-        let mut conn =
-            crate::persistence::establish_rw_connection(&database_path.to_string_lossy())?;
         let a = self.workspaces[idx].display_order;
         let b = self.workspaces[neighbor_idx].display_order;
-        super::manager::set_display_order(&mut conn, self.workspaces[idx].id, b)?;
-        super::manager::set_display_order(&mut conn, self.workspaces[neighbor_idx].id, a)?;
+        let neighbor_id = self.workspaces[neighbor_idx].id;
         self.workspaces[idx].display_order = b;
         self.workspaces[neighbor_idx].display_order = a;
         self.workspaces.sort_by_key(|w| w.display_order);
-        let neighbor_id = self.workspaces.iter().find(|w| w.display_order == a).map(|w| w.id);
+        self.send_event(ModelEvent::UpdateFolderWorkspaceDisplayOrder {
+            id,
+            display_order: b,
+        });
+        self.send_event(ModelEvent::UpdateFolderWorkspaceDisplayOrder {
+            id: neighbor_id,
+            display_order: a,
+        });
         ctx.emit(FolderWorkspaceEvent::Updated { id });
-        if let Some(nid) = neighbor_id {
-            ctx.emit(FolderWorkspaceEvent::Updated { id: nid });
-        }
+        ctx.emit(FolderWorkspaceEvent::Updated { id: neighbor_id });
         Ok(())
     }
 
@@ -183,11 +218,11 @@ impl FolderWorkspaceModel {
             .iter()
             .find(|w| w.id != id)
             .map(|w| w.id);
-        let database_path = crate::persistence::database_file_path();
-        let mut conn =
-            crate::persistence::establish_rw_connection(&database_path.to_string_lossy())?;
-        super::manager::delete_with_tab_reassignment(&mut conn, id, fallback_id)?;
         self.workspaces.remove(idx);
+        if self.last_active_id == Some(id) {
+            self.last_active_id = fallback_id;
+        }
+        self.send_event(ModelEvent::DeleteFolderWorkspace { id, fallback_id });
         ctx.emit(FolderWorkspaceEvent::Deleted { id });
         Ok(())
     }

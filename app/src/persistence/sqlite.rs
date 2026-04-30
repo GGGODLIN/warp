@@ -203,16 +203,6 @@ pub fn establish_ro_connection(database_url: &str) -> Result<SqliteConnection> {
     establish_connection(database_url, true)
 }
 
-/// Returns a fresh read-write connection, bypassing the writer thread.
-/// **Spike-only**: use sparingly for low-frequency UI mutations (e.g. user
-/// clicking + to add a folder workspace). High-frequency writes must still go
-/// through the writer thread via ModelEvent. SQLite WAL mode + the 1-second
-/// PRAGMA busy_timeout in establish_connection mitigate contention with the
-/// writer thread for these rare cases.
-pub fn establish_rw_connection(database_url: &str) -> Result<SqliteConnection> {
-    establish_connection(database_url, false)
-}
-
 fn establish_connection(database_url: &str, read_only: bool) -> Result<SqliteConnection> {
     let full_database_url = if read_only {
         &format!("file:{database_url}?mode=ro")
@@ -739,6 +729,50 @@ fn handle_model_event(event: ModelEvent, connection: &mut SqliteConnection) -> a
             title,
         } => save_ai_document_content(connection, &document_id, &content, version, &title)
             .context("error saving AI document content"),
+        ModelEvent::InsertFolderWorkspace {
+            name,
+            path,
+            display_order,
+            collapsed,
+            tentative_id,
+        } => crate::folder_workspace::manager::create_with_id_and_attrs(
+            connection,
+            tentative_id,
+            &name,
+            &path,
+            display_order,
+            collapsed,
+        )
+        .map(|_| ())
+        .map_err(anyhow::Error::from)
+        .context("error inserting folder workspace"),
+        ModelEvent::UpdateFolderWorkspaceCollapsed { id, collapsed } => {
+            crate::folder_workspace::manager::update_collapsed(connection, id, collapsed)
+                .map(|_| ())
+                .map_err(anyhow::Error::from)
+                .context("error updating folder workspace collapsed")
+        }
+        ModelEvent::UpdateFolderWorkspaceName { id, name } => {
+            crate::folder_workspace::manager::rename(connection, id, &name)
+                .map(|_| ())
+                .map_err(anyhow::Error::from)
+                .context("error renaming folder workspace")
+        }
+        ModelEvent::UpdateFolderWorkspaceDisplayOrder { id, display_order } => {
+            crate::folder_workspace::manager::set_display_order(connection, id, display_order)
+                .map(|_| ())
+                .map_err(anyhow::Error::from)
+                .context("error setting folder workspace display order")
+        }
+        ModelEvent::DeleteFolderWorkspace { id, fallback_id } => {
+            crate::folder_workspace::manager::delete_with_tab_reassignment(
+                connection,
+                id,
+                fallback_id,
+            )
+            .map_err(anyhow::Error::from)
+            .context("error deleting folder workspace")
+        }
     }
 }
 
