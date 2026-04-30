@@ -32,10 +32,12 @@ impl MenuBarStatusItemController {
 /// Registers the singleton, applies the current setting, and subscribes to
 /// future `close_to_menu_bar` toggles. Call once during app init.
 pub fn init(ctx: &mut AppContext) {
+    log::info!("[menu-bar-status-item] init invoked");
     ctx.add_singleton_model(MenuBarStatusItemController::new);
     refresh(ctx);
     ctx.subscribe_to_model(&WindowSettings::handle(ctx), |_, event, ctx| {
         if matches!(event, WindowSettingsChangedEvent::CloseToMenuBar { .. }) {
+            log::info!("[menu-bar-status-item] CloseToMenuBar setting changed; refreshing");
             refresh(ctx);
         }
     });
@@ -43,19 +45,26 @@ pub fn init(ctx: &mut AppContext) {
 
 fn refresh(ctx: &mut AppContext) {
     let enabled = *WindowSettings::as_ref(ctx).close_to_menu_bar;
+    log::info!("[menu-bar-status-item] refresh: close_to_menu_bar = {enabled}");
     MenuBarStatusItemController::handle(ctx).update(ctx, |me, _ctx| {
-        match (enabled, me.item.is_some()) {
+        let had_item = me.item.is_some();
+        match (enabled, had_item) {
             (true, false) => {
+                log::info!("[menu-bar-status-item] installing NSStatusItem");
                 me.item = Some(StatusItem::install(
                     None,
                     Box::new(show_warp_action),
                     Box::new(quit_warp_action),
                 ));
+                log::info!("[menu-bar-status-item] install returned");
             }
             (false, true) => {
+                log::info!("[menu-bar-status-item] removing NSStatusItem");
                 me.item = None;
             }
-            _ => {}
+            (state, _) => {
+                log::info!("[menu-bar-status-item] no-op: enabled={state}, had_item={had_item}");
+            }
         }
     });
 }

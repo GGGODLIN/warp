@@ -16,6 +16,8 @@ void warp_status_item_context_freed(void *context);
 
         _statusItem = [[[NSStatusBar systemStatusBar]
             statusItemWithLength:NSVariableStatusItemLength] retain];
+        NSLog(@"[WarpStatusItem] created NSStatusItem=%p button=%p", _statusItem,
+              _statusItem.button);
 
         if (imageData != nil) {
             NSImage *image = [[[NSImage alloc] initWithData:imageData] autorelease];
@@ -29,6 +31,8 @@ void warp_status_item_context_freed(void *context);
             // Fallback to a plain title so the user can still find/click the
             // status item even if the image data is missing or invalid.
             [_statusItem.button setTitle:@"Warp"];
+            NSLog(@"[WarpStatusItem] set title=Warp; button.title=%@ visible=%d",
+                  _statusItem.button.title, _statusItem.button.window != nil);
         }
 
         NSMenu *menu = [[[NSMenu alloc] initWithTitle:@""] autorelease];
@@ -46,6 +50,8 @@ void warp_status_item_context_freed(void *context);
         [menu addItem:quitItem];
 
         [_statusItem setMenu:menu];
+        NSLog(@"[WarpStatusItem] init done; statusItem.length=%f button.frame=%@",
+              _statusItem.length, NSStringFromRect(_statusItem.button.frame));
     }
     return self;
 }

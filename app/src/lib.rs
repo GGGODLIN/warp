@@ -1926,17 +1926,25 @@ fn app_callbacks(is_integration_test: bool) -> warpui::platform::AppCallbacks {
             crash_reporting::uninit_sentry();
         })),
         on_should_close_window: Some(Box::new(move |window_id, ctx| {
-            // V4 close-to-menu-bar (macOS-only): when this is the last window
-            // and the setting is on, hide the window instead of letting it
-            // close. The wrap process keeps running and can be reopened from
-            // the menu-bar status item ("Show Warp"). This must run before
-            // the existing quit-on-last-window-closed branch, otherwise that
-            // branch would terminate the app instead.
+            // V4 close-to-menu-bar (macOS-only): when the setting is on, hide
+            // every window close instead of letting it close — the wrap
+            // process keeps running with claude / shell sessions intact, and
+            // the user can reopen via the menu-bar status item or Dock click.
+            //
+            // We intercept every close (not just the last visible one) because
+            // a count-based check breaks after a round-trip close → reopen:
+            // the hidden window is still in `window_ids()`, so a second close
+            // would see count = 2 and fall through to the unsaved-process
+            // dialog. ⌘Q (`terminate_app`) is unaffected — it hits a
+            // different callback path.
+            //
+            // Must run before the existing quit-on-last-window-closed branch
+            // so that branch can't pre-empt and terminate the app.
             #[cfg(target_os = "macos")]
             {
                 let close_to_menu_bar =
                     *crate::window_settings::WindowSettings::as_ref(ctx).close_to_menu_bar;
-                if close_to_menu_bar && ctx.window_ids().count() == 1 {
+                if close_to_menu_bar {
                     log::info!("close_to_menu_bar: hiding {window_id:?} instead of closing");
                     ctx.windows().hide_window(window_id);
                     return ApproveTerminateResult::Cancel;
@@ -2064,6 +2072,26 @@ fn app_callbacks(is_integration_test: bool) -> warpui::platform::AppCallbacks {
             // This one is called when the app is requested to open a new window,
             // e.g. clicking on the Dock icon. It is NOT called from the New Window
             // menu item.
+            //
+            // V4 close-to-menu-bar (macOS): if any window already exists
+            // (typically hidden by the V4 close intercept), unhide and focus it
+            // instead of opening a brand-new one — that way the user round-trips
+            // close → Dock click without losing process state.
+            #[cfg(target_os = "macos")]
+            {
+                let close_to_menu_bar =
+                    *crate::window_settings::WindowSettings::as_ref(ctx).close_to_menu_bar;
+                if close_to_menu_bar {
+                    if let Some(window_id) = ctx.window_ids().next() {
+                        log::info!(
+                            "close_to_menu_bar: Dock-click reopen unhiding {window_id:?}"
+                        );
+                        ctx.windows().show_window_and_focus_app(window_id);
+                        return;
+                    }
+                }
+            }
+
             App::record_last_active_timestamp();
             ctx.dispatch_global_action("root_view:open_new", &());
             ctx.dispatch_global_action("workspace:save_app", &());
