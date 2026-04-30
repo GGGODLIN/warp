@@ -734,6 +734,7 @@ fn handle_model_event(event: ModelEvent, connection: &mut SqliteConnection) -> a
             path,
             display_order,
             collapsed,
+            default_command,
             tentative_id,
         } => crate::folder_workspace::manager::create_with_id_and_attrs(
             connection,
@@ -742,6 +743,7 @@ fn handle_model_event(event: ModelEvent, connection: &mut SqliteConnection) -> a
             &path,
             display_order,
             collapsed,
+            default_command.as_deref(),
         )
         .map(|_| ())
         .map_err(anyhow::Error::from)

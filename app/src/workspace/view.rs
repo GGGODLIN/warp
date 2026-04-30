@@ -20476,10 +20476,21 @@ impl TypedActionView for Workspace {
             AddFolderWorkspace { name, path } => {
                 let name = name.clone();
                 let path = path.clone();
+                let default_command = {
+                    let settings = crate::settings::FolderWorkspaceSettings::as_ref(ctx);
+                    let value: &str = &settings.default_command_for_new_workspaces;
+                    if value.is_empty() {
+                        None
+                    } else {
+                        Some(value.to_string())
+                    }
+                };
                 crate::folder_workspace::FolderWorkspaceModel::handle(ctx).update(
                     ctx,
                     move |model, model_ctx| {
-                        if let Err(err) = model.create_workspace(&name, &path, model_ctx) {
+                        if let Err(err) =
+                            model.create_workspace(&name, &path, default_command, model_ctx)
+                        {
                             log::warn!("Failed to create folder workspace: {err}");
                         }
                     },

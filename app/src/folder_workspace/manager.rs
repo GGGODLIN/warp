@@ -24,16 +24,18 @@ pub fn create_with_id_and_attrs(
     path: &str,
     display_order: i32,
     collapsed: bool,
+    default_command: Option<&str>,
 ) -> QueryResult<usize> {
     diesel::sql_query(
-        "INSERT INTO folder_workspaces (id, name, path, display_order, collapsed) \
-         VALUES (?, ?, ?, ?, ?)",
+        "INSERT INTO folder_workspaces (id, name, path, display_order, collapsed, default_command) \
+         VALUES (?, ?, ?, ?, ?, ?)",
     )
     .bind::<diesel::sql_types::Integer, _>(id)
     .bind::<diesel::sql_types::Text, _>(name)
     .bind::<diesel::sql_types::Text, _>(path)
     .bind::<diesel::sql_types::Integer, _>(display_order)
     .bind::<diesel::sql_types::Bool, _>(collapsed)
+    .bind::<diesel::sql_types::Nullable<diesel::sql_types::Text>, _>(default_command)
     .execute(conn)
 }
 
@@ -404,11 +406,21 @@ mod tests {
     #[test]
     fn create_with_id_honors_caller_supplied_id() {
         let mut conn = setup_conn();
-        create_with_id_and_attrs(&mut conn, 42, "forty-two", "/tmp/42", 5, true).unwrap();
+        create_with_id_and_attrs(&mut conn, 42, "forty-two", "/tmp/42", 5, true, None).unwrap();
         let row = get_by_id(&mut conn, 42).unwrap();
         assert_eq!(row.name, "forty-two");
         assert_eq!(row.path, "/tmp/42");
         assert_eq!(row.display_order, 5);
         assert!(row.collapsed);
+        assert_eq!(row.default_command, None);
+    }
+
+    #[test]
+    fn create_with_id_persists_default_command() {
+        let mut conn = setup_conn();
+        create_with_id_and_attrs(&mut conn, 7, "with", "/tmp/with", 0, false, Some("claude"))
+            .unwrap();
+        let row = get_by_id(&mut conn, 7).unwrap();
+        assert_eq!(row.default_command.as_deref(), Some("claude"));
     }
 }

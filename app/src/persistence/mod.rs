@@ -391,6 +391,7 @@ pub enum ModelEvent {
         path: String,
         display_order: i32,
         collapsed: bool,
+        default_command: Option<String>,
         // Tentative in-memory id assigned by the model; sqlite ignores it
         // on insert (autoincrement), but bootstrap reload uses the real id.
         tentative_id: i32,

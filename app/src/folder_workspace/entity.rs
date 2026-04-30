@@ -110,17 +110,20 @@ impl FolderWorkspaceModel {
         &mut self,
         name: &str,
         path: &std::path::Path,
+        default_command: Option<String>,
         ctx: &mut ModelContext<Self>,
     ) -> anyhow::Result<i32> {
         let id = self.next_tentative_id();
         let display_order = self.next_display_order();
         let path_str = path.to_string_lossy().into_owned();
+        let normalized_default_command = default_command.filter(|s| !s.is_empty());
         self.send_event(ModelEvent::InsertFolderWorkspace {
             tentative_id: id,
             name: name.to_string(),
             path: path_str.clone(),
             display_order,
             collapsed: false,
+            default_command: normalized_default_command.clone(),
         });
         let workspace = FolderWorkspace {
             id,
@@ -129,7 +132,7 @@ impl FolderWorkspaceModel {
             display_order,
             collapsed: false,
             created_ts: Utc::now().naive_utc(),
-            default_command: None,
+            default_command: normalized_default_command,
         };
         self.workspaces.push(workspace);
         self.last_active_id = Some(id);
