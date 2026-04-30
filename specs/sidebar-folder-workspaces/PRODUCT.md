@@ -352,4 +352,95 @@ if FeatureFlag::FolderWorkspacesEnabled.is_enabled() {
 
 ---
 
+# V4 增量規格 — Close to menu bar（2026-04-30）
+
+> **Why**: cmux 工作流程 port 到 wrap 的最後一塊。cmux 行為是「**app 不真的退出**，window 隱藏到 menu bar 圖示，process 持續執行」 — 這樣 claude session、shell、scrollback 全部活在 memory 內，下次點圖示恢復 window 一切還在。
+>
+> **設計核心**：**不是「真退出後重啟還原」**（那要 daemonize terminal server + reconnect + scrollback 持久化，月以上工程），是「app 不死，只 hide window」 — cmux 也是這條路徑。
+
+## V4 範圍邊界
+
+**做**：
+- macOS only（cmux 也 macOS only；cross-platform tray 是 v5+）
+- 「app 不死、window 隱藏到 menu bar 圖示」單一 feature
+- Setting opt-in（預設 off 不破壞既有行為）
+
+**不做（v5+）**：
+- 跨平台（Linux libappindicator、Windows Shell_NotifyIcon）
+- 「真退出後重啟還原 running process」（daemonized terminal server）
+- Scrollback 跨重啟持久化
+- Cmux 的「sidebar 通知圖示」/「unread count」進 menu bar 圖示
+
+## V4 user stories
+
+### S9 Close to menu bar（必做）
+
+- 開了 setting 後，⌘W / 點 window 關閉鍵 / 「最後一個 window close」**不退出 app**
+- Window 隱藏（既有 `hide_window` API），process 繼續跑
+- claude / shell / running command 全部不死
+- ⌘Q 才真退出 app（不變）
+- 設定 off 時行為跟現在完全一致（既有 close = quit 路徑）
+
+### S10 Menu bar status icon（必做）
+
+- App active 時 menu bar 看到 wrap 圖示
+- 點圖示 → drop-down menu 至少兩個 item：
+  - 「Show Warp」→ 恢復隱藏的 window（沒 window 就建一個新的）
+  - 「Quit Warp」→ 真退出 app（走 `[NSApp terminate]`）
+- 圖示是 wrap 既有 logo 的 menu bar variant（黑白 template image）
+
+### S11 Setting toggle（必做）
+
+- Settings 加 `close_to_menu_bar`（bool，預設 `false`）
+- Setting on → S9 + S10 行為啟用
+- Setting off → 既有行為，無 menu bar 圖示，close = quit
+- Setting 改動立即生效（不用重啟 app）
+
+### S12 Hide Dock icon (optional, 評估後決定)
+
+cmux 模式是「Dock 圖示也隱藏，只留 menu bar 圖示」（macOS `setActivationPolicy(.accessory)` 或 `LSUIElement = true`）。
+
+**Open question — 跟 user 確認**：
+- (a) 跟 cmux 完全一樣，setting on → 隱藏 Dock 圖示
+- (b) 預設 Dock 仍在，加第二個 setting 「Hide from Dock when closed to menu bar」獨立控制
+- (c) v4 只做 menu bar 不碰 Dock，保留 Dock 圖示永遠在（最小化風險）
+
+v4 預設 (c)，待 user push back 再加 (a)/(b)。
+
+## V4 不在範圍內
+
+- **Daemonized terminal server**：wrap 的 terminal server 是 GUI fork 出來的，GUI 死它也死。要做「真退出後 process 還活」必須 daemonize + reconnect 機制 — v5+ 大工程
+- **跨平台 tray**：Linux tray 各 distro 支援不齊（GNOME 預設拿掉 tray），Windows API 跟 macOS 完全不同 — v5+
+- **多視窗 hide-all 行為**：v4 假設 user 主要單視窗用法；多視窗時「last window close 才 hide」邏輯（其他 window 仍正常 close）
+- **Auto-hide on lose focus**：跟 quake mode `hide_window_when_unfocused` 不同概念，後者是 quake mode 行為，前者是 V4 close 路徑
+
+## V4 Open Questions
+
+- **S12 Dock icon 行為**：(a)/(b)/(c) 哪個 — 待 user push back
+- **macOS App 已 hide 但 user ⌘Tab 切回來**：行為自動 unhide window 還是 no-op？標準 macOS 應該 unhide，但實作上要驗證
+- **`applicationShouldTerminate:` hook 與 setting 互動**：既有 [`app.m:257`](file:///Users/linhancheng/Desktop/projects/warp-fork/crates/warpui/src/platform/mac/objc/app.m) 處理 confirm dialog；setting on 時要在哪一層攔截 close → 在 close window event 端攔（建議），不在 NSApp terminate 端
+- **Menu bar 圖示 click action**：點圖示直接顯示 menu，還是 left-click = Show Warp + right-click = menu？標準 macOS 是「click 直接顯示 menu」（NSStatusItem.menu），v4 採此
+
+## V4 Success Criteria
+
+- [ ] **S9** Setting on + 點 window 關閉鍵 → window 隱藏，wrap process PID 仍存在
+- [ ] **S9** Setting on + ⌘W → window 隱藏（不 quit）
+- [ ] **S9** Setting on + window 隱藏狀態下 claude session 仍跑（macOS Activity Monitor 看 wrap process 還在）
+- [ ] **S9** Setting on + ⌘Q → 真 quit
+- [ ] **S9** Setting off → 行為跟現在完全一致
+- [ ] **S10** Setting on → menu bar 看到 wrap 圖示
+- [ ] **S10** 點圖示 → 看到「Show Warp」「Quit Warp」
+- [ ] **S10** Setting on + 「Show Warp」→ window 恢復；點時沒 window 也建一個新的
+- [ ] **S10** Setting on + 「Quit Warp」→ 真 quit
+- [ ] **S10** Setting off → menu bar 沒 wrap 圖示
+- [ ] **S11** Settings UI 看到「Close to menu bar」toggle，預設 off
+- [ ] **S11** Toggle 後立即生效（不用重啟 app）
+- [ ] **Quality**：`./script/presubmit` 過、不 break flag-off 行為、既有 quit / close 路徑無 regression
+
+---
+
+**V4 spec done — 2026-04-30。Awaiting TECH.md V4 + TASKS.md V4 update + commit + 排優先序。**
+
+---
+
 **Phase 1 done. Awaiting human review before Phase 2 (PLAN).**

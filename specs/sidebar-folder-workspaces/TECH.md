@@ -513,3 +513,157 @@ Step 1-4 是核心路徑（不做完功能不 work），Step 5 是 quality of li
 ---
 
 **V3 tech plan done — 2026-04-30。Awaiting TASKS.md V3 update。**
+
+---
+
+# V4 增量技術規劃 — Close to menu bar（2026-04-30）
+
+> 對齊 [PRODUCT.md V4 增量規格](file:///Users/linhancheng/Desktop/projects/warp-fork/specs/sidebar-folder-workspaces/PRODUCT.md)。
+
+## 核心設計：借力既有 hide_window + ObjC FFI
+
+| 既有元件 | Path | V4 用途 |
+|---|---|---|
+| `Platform::hide_window(window_id)` | [`crates/warpui_core/src/platform/mod.rs:585`](file:///Users/linhancheng/Desktop/projects/warp-fork/crates/warpui_core/src/platform/mod.rs) + [`crates/warpui/src/platform/mac/window.rs:840`](file:///Users/linhancheng/Desktop/projects/warp-fork/crates/warpui/src/platform/mac/window.rs) | Close window event 走這條，不走 destroy/terminate |
+| `terminate_app` | [`crates/warpui/src/platform/mac/delegate.rs:397-412`](file:///Users/linhancheng/Desktop/projects/warp-fork/crates/warpui/src/platform/mac/delegate.rs) | 「Quit Warp」menu item 走這條 |
+| `applicationShouldTerminate:` | [`crates/warpui/src/platform/mac/objc/app.m:257`](file:///Users/linhancheng/Desktop/projects/warp-fork/crates/warpui/src/platform/mac/objc/app.m) | 既有 confirm dialog 邏輯保留，V4 不動 |
+| `applicationShouldHandleReopen:hasVisibleWindows:` | [`crates/warpui/src/platform/mac/objc/app.m:324`](file:///Users/linhancheng/Desktop/projects/warp-fork/crates/warpui/src/platform/mac/objc/app.m) | Dock click reopen 路徑，V4 menu bar 圖示「Show Warp」可重用此 path |
+| `Event::CloseRequested` handler | [`app/src/pane_group/pane/terminal_pane.rs:656`](file:///Users/linhancheng/Desktop/projects/warp-fork/app/src/pane_group/pane/terminal_pane.rs) | 主要攔截點 |
+| ObjC FFI infra | [`crates/warpui/src/platform/mac/objc/`](file:///Users/linhancheng/Desktop/projects/warp-fork/crates/warpui/src/platform/mac/objc/) | NSStatusItem 加在這 |
+| Settings `pub struct Settings` | [`app/src/settings/mod.rs`](file:///Users/linhancheng/Desktop/projects/warp-fork/app/src/settings/mod.rs)（已被 quake mode 用） | 加 `close_to_menu_bar` field |
+
+## V4 待做組件
+
+### 1. NSStatusItem ObjC FFI（新檔）
+
+新檔 `crates/warpui/src/platform/mac/objc/status_item.m` + Rust binding 在 `crates/warpui/src/platform/mac/window.rs` 或新檔 `status_item.rs`：
+
+```objc
+// status_item.m
+NSStatusItem *create_status_item(void);
+void destroy_status_item(NSStatusItem *item);
+void set_status_item_image(NSStatusItem *item, NSImage *image);
+void set_status_item_menu(NSStatusItem *item, NSMenu *menu);
+```
+
+```rust
+// status_item.rs
+extern "C" {
+    fn create_status_item() -> id;
+    fn destroy_status_item(item: id);
+    fn set_status_item_image(item: id, image: id);
+    fn set_status_item_menu(item: id, menu: id);
+}
+
+pub struct StatusItem {
+    handle: id,
+    show_warp_action: Box<dyn Fn() + Send>,
+    quit_action: Box<dyn Fn() + Send>,
+}
+
+impl StatusItem {
+    pub fn install(show_warp: ..., quit: ...) -> Self { ... }
+    pub fn uninstall(&mut self) { ... }
+}
+```
+
+NSMenu 兩個 item 的 action 透過 ObjC target-action pattern 觸發 — Rust 端 export `extern "C"` callback 給 ObjC selector。
+
+### 2. Setting field
+
+[`app/src/settings/mod.rs`](file:///Users/linhancheng/Desktop/projects/warp-fork/app/src/settings/mod.rs) 加：
+
+```rust
+pub struct Settings {
+    // ... existing fields
+    pub close_to_menu_bar: bool,
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Self {
+            // ...
+            close_to_menu_bar: false,
+        }
+    }
+}
+```
+
+接著 user_preferences toml 也對應。Setting change event 要 broadcast 出去（既有 settings 應有 SettingsChanged event pattern；T33 grep 確認）。
+
+### 3. Setting handler — install/uninstall status item
+
+新 `app/src/menu_bar_status_item.rs`（或併入 `lib.rs` setting watcher）：
+
+- App init 時讀 setting：`close_to_menu_bar` true → install status item
+- Setting change 監聽：on → install、off → uninstall
+- Status item 持有 strong ref，存 `App` 或 `WorkspaceModel` 內
+
+### 4. Close window 攔截
+
+兩條 close 路徑要看：
+
+**Path A — 點 window 關閉鍵（紅圈）**：走 winit `WindowEvent::CloseRequested` → 進 winit event loop → wrap dispatch `Event::CloseRequested` → [`terminal_pane.rs:656`](file:///Users/linhancheng/Desktop/projects/warp-fork/app/src/pane_group/pane/terminal_pane.rs)`group.close_pane_with_confirmation`
+
+**Path B — ⌘W**：走 menu shortcut 或 keystroke handler
+
+兩條最終都到 close 邏輯。攔截策略：
+
+- 在 `close_pane_with_confirmation` 之前加 setting check
+- 如果 setting on **AND** 這是 last window 的 last pane（pane_group only 1 pane）→ 走 `hide_window(window_id)` 而非 close
+- 否則走原 close 邏輯（multi-pane 內 close 一個 pane 仍正常 close）
+
+**注意**：「last window」判斷要在 `WorkspaceModel` 或 `App` level 做，pane 不知道全局 window 數。可能需要 plumb event 到上層 handler。
+
+### 5. Show Warp action
+
+「Show Warp」menu click → dispatch global action（既有 root_view 應有對應 action）：
+
+- 找隱藏的 window → unhide（macOS NSWindow `orderFront:`）
+- 沒任何 window → 建新 window（既有 new-window action 重用）
+
+可重用 [`app.m:324`](file:///Users/linhancheng/Desktop/projects/warp-fork/crates/warpui/src/platform/mac/objc/app.m) `applicationShouldHandleReopen:` 的邏輯（Dock click 重開窗已有處理）。
+
+### 6. Settings UI 加 toggle
+
+抄既有 settings UI 的 bool toggle pattern（grep `pub fn render_toggle` 或 `Settings → ...`），加在 General / Window / Behavior 子分類。
+
+## V4 Risks & Mitigation
+
+| 風險 | 影響 | 緩解 |
+|---|---|---|
+| NSStatusItem callback callback 進 winit event loop | menu click 接不到主邏輯 | ObjC callback `extern "C"` → 透過 `event_loop_proxy.send_event(CustomEvent::StatusItemClicked)`（同 P6 folder picker pattern） |
+| Last-window 判斷邏輯複雜 | Setting on 但多 window 時誤 hide-all 或誤 close-all | 邏輯：「only hide when this is the last visible window」；non-last close 走原路徑 |
+| Setting 從 on → off 時 status item 沒清掉 | menu bar 殘留圖示 | Setting watcher 監聽，off 時呼叫 `uninstall()` |
+| `applicationShouldTerminateAfterLastWindowClosed` 預設 macOS NSApp 行為 | 即便不設，最後 window close 不會自動 quit（對 wrap 來說預設行為待驗） | T32 spike 確認 — 多數 NSApplication 預設是 NO，不主動 quit；wrap 應該也是 |
+| 隱藏 window 期間使用者 ⌘Tab 看到 app 但點不到 window | UX 差 | macOS 標準：app 收到 reopen event 自動 unhide 第一個 window；接 `applicationShouldHandleReopen:` 即可 |
+| ⌘Q 路徑被改錯 | 變成 ⌘Q 也只 hide 不 quit | 攔截**只**在 close window 路徑（Path A/B），`terminate_app` 路徑不動 |
+| Memory leak 長期運行累積 | 跑幾天 memory 漲 | 接受，user 自己 ⌘Q 重啟；wrap 既有 leak 不是 V4 引進的 |
+| Setting toml 存進去後讀回來檢查 | 跨 restart 持久 | T33 確認 user_preferences toml schema 寫好 |
+
+## V4 Implementation Order
+
+| Step | Item | Verification |
+|---|---|---|
+| 1 | Setting field 加（`close_to_menu_bar: bool`）+ toml schema | restart 後 setting 持久；改 toml 直接讀回 |
+| 2 | Settings UI toggle | UI 看到 toggle，改它寫進 setting |
+| 3 | NSStatusItem ObjC FFI（純 install / image / menu / uninstall） | 手動：寫個 trigger 暫時 install → menu bar 看到圖示 |
+| 4 | Status item install / uninstall by setting watcher | toggle setting on → 圖示出現；off → 消失 |
+| 5 | Show Warp / Quit Warp menu actions | 點 Show Warp → 重開 window；點 Quit Warp → app 真退 |
+| 6 | Close window 攔截邏輯（last-window check + hide_window） | setting on + close last window → window 隱藏 + process 不死；non-last window close 行為不變 |
+| 7 | Smoke + S12 Dock icon 開放 question | 跑 PRODUCT.md V4 Success Criteria 全部 |
+
+Step 1-2 純 setting；Step 3-4 純 status item；Step 5-6 是 hide/quit 行為攔截 — 三段獨立，可平行做但 Step 6 依賴 Step 1（要讀 setting）。
+
+## V4 Cross-platform out-of-scope（v5+ reference）
+
+未來 cross-platform 路線（記錄不做）：
+- **Linux**：libappindicator (KDE) / GNOME 預設無 tray，需 GNOME extension — 不可靠
+- **Windows**：Shell_NotifyIcon API（透過 `tray-icon` crate 或自寫 win32 FFI）
+- **跨平台 crate**：`tray-icon`、`tray_item`、`ksni` — 評估時看授權跟維護狀態
+
+V4 不引入這些 crate，避免 dependency 增加。
+
+---
+
+**V4 tech plan done — 2026-04-30。Awaiting TASKS.md V4 update。**

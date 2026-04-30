@@ -1040,3 +1040,268 @@ self.add_tab_with_pane_layout(layout, Arc::new(HashMap::new()), None, ctx);
 ---
 
 **Phase 3 V3 update done — 2026-04-30。Spec commit 後 user 排優先序開做。**
+
+---
+
+## V4 Session — Close to menu bar (2026-04-30)
+
+> 對齊 [PRODUCT.md V4 增量規格](file:///Users/linhancheng/Desktop/projects/warp-fork/specs/sidebar-folder-workspaces/PRODUCT.md) + [TECH.md V4 增量技術規劃](file:///Users/linhancheng/Desktop/projects/warp-fork/specs/sidebar-folder-workspaces/TECH.md)。
+>
+> **目標**：cmux「app 不真退出，window 隱藏到 menu bar 圖示」行為 port 到 wrap。**macOS only**。setting opt-in 預設 off。
+
+### Task 32: V4.1 — Setting `close_to_menu_bar` + toml schema
+
+**Description**:
+
+1. [`app/src/settings/mod.rs`](file:///Users/linhancheng/Desktop/projects/warp-fork/app/src/settings/mod.rs) `Settings` struct 加 `close_to_menu_bar: bool`，default `false`
+2. user_preferences toml schema 對應加（看 [`crates/warpui_extras/src/user_preferences/`](file:///Users/linhancheng/Desktop/projects/warp-fork/crates/warpui_extras/src/user_preferences/) 既有 bool field 範例）
+3. SettingsChanged broadcast event（grep 既有 settings change pattern）
+4. Setting 改變 → broadcast → 後續 Task 35 listener 收到後 install/uninstall
+
+**Acceptance**:
+- [ ] Setting field 加好，default false
+- [ ] toml round-trip：寫 `close_to_menu_bar = true` 進 toml → restart wrap → setting 讀回 true
+- [ ] SettingsChanged event 在 toggle 時 fire（log 或 unit test cover）
+
+**Verification**:
+- `cargo build` 過
+- 手動：改 toml file → restart 觀察 setting 持久
+- unit test：`Settings::default().close_to_menu_bar == false`
+
+**Dependencies**: 無
+
+**Files**: `app/src/settings/mod.rs` + user_preferences toml schema (1-2 file) — 2-3 files
+
+**Scope**: S
+
+---
+
+### Task 33: V4.2 — Settings UI toggle
+
+**Description**:
+
+Settings UI 加「Close to menu bar」toggle，在 General / Window / Behavior 子分類（grep 既有 bool toggle 看放哪）。Toggle change → 寫進 setting → broadcast。
+
+**Acceptance**:
+- [ ] Settings UI 看到 toggle，預設 off
+- [ ] 點 toggle on/off → setting value 跟著變
+- [ ] toml 跟著 update
+
+**Verification**:
+- 手動：開 Settings → 看到 toggle → 點切 → 再 reopen Settings 確認狀態保留
+- toml file 看到對應寫入
+
+**Dependencies**: T32
+
+**Files**: settings UI render file (T33 grep 確認，可能在 [`app/src/settings/`](file:///Users/linhancheng/Desktop/projects/warp-fork/app/src/settings/) 內) — 1-2 files
+
+**Scope**: S
+
+---
+
+### Task 34: V4.3 — NSStatusItem ObjC FFI
+
+**Description**:
+
+新檔 `crates/warpui/src/platform/mac/objc/status_item.m` + Rust binding 在新檔 `crates/warpui/src/platform/mac/status_item.rs`：
+
+ObjC API：
+```objc
+NSStatusItem *create_status_item(void);
+void destroy_status_item(NSStatusItem *item);
+void set_status_item_image(NSStatusItem *item, NSData *png_bytes);
+void set_status_item_menu(NSStatusItem *item, NSString **item_titles, int n);
+```
+
+Rust binding：
+```rust
+pub struct StatusItem {
+    handle: id,
+}
+
+impl StatusItem {
+    pub fn install(image_png: &[u8], menu_items: Vec<(String, Box<dyn Fn() + Send>)>) -> Self;
+}
+
+impl Drop for StatusItem {
+    fn drop(&mut self) { unsafe { destroy_status_item(self.handle) } }
+}
+```
+
+Menu item callback 透過 ObjC target-action — Rust export `extern "C" fn handle_status_item_action(idx: c_int)`，ObjC 端 NSMenuItem.target+selector 觸發此 fn，內部依 idx 呼叫 stored callbacks。
+
+Image 暫用 wrap 既有 logo 的 monochrome variant（template image，macOS 自動 dark/light 適配）；找不到的話 v4 spike 用任意 placeholder PNG，T36 polish 換正式 icon。
+
+**Acceptance**:
+- [ ] `StatusItem::install(...)` 呼叫 → menu bar 看到圖示
+- [ ] 圖示 click → menu drop down，看到 menu items
+- [ ] click menu item → callback 觸發
+- [ ] `drop(StatusItem)` → 圖示消失
+
+**Verification**:
+- 手動：寫個一次性 trigger（譬如 settings init 暫時無條件 install）→ 看 menu bar 圖示+ menu items
+- callback：menu items 印 log，點看 log
+
+**Dependencies**: 無（ObjC FFI 獨立）
+
+**Files**: 新 `crates/warpui/src/platform/mac/objc/status_item.m` + 新 `crates/warpui/src/platform/mac/status_item.rs` + `crates/warpui/build.rs` (cc compile new .m) + `crates/warpui/src/platform/mac/mod.rs` (re-export) — 4 files
+
+**Scope**: M（**最高風險** — ObjC FFI 跨 winit 整合曲線）
+
+---
+
+### Task 35: V4.4 — Status item install/uninstall by setting watcher
+
+**Description**:
+
+App 內持有 `Option<StatusItem>` 在 `App` 或 `WorkspaceModel`。
+
+- App init 時讀 `close_to_menu_bar`：true → `StatusItem::install(...)` 寫進 Option
+- SettingsChanged listener 監聽 `close_to_menu_bar`：
+  - false → true → install
+  - true → false → drop（Option set None）
+- StatusItem callbacks（Show Warp / Quit Warp）目前先空 impl，T36 接
+
+**Acceptance**:
+- [ ] App init + setting on → menu bar 看到圖示
+- [ ] App init + setting off → 沒圖示
+- [ ] Toggle setting off → on → 圖示出現
+- [ ] Toggle setting on → off → 圖示消失
+
+**Verification**:
+- 手動：toggle setting 切換看圖示生滅
+
+**Dependencies**: T32, T34
+
+**Files**: `app/src/lib.rs` 或新 `app/src/menu_bar_status_item.rs` — 1-2 files
+
+**Scope**: S
+
+---
+
+### Task 36: V4.5 — Show Warp / Quit Warp menu actions
+
+**Description**:
+
+實作 status item menu 兩個 callback：
+
+**Show Warp**：
+- 走 winit `event_loop_proxy.send_event(CustomEvent::ShowWarpFromStatusItem)`
+- main thread handler 收到 → 呼叫 `applicationShouldHandleReopen:hasVisibleWindows:NO` 既有 reopen 路徑（[`app.m:324`](file:///Users/linhancheng/Desktop/projects/warp-fork/crates/warpui/src/platform/mac/objc/app.m)） — 該邏輯本來就處理「Dock click 重開隱藏 window」
+- 如果完全沒 window，走「new window」action
+
+**Quit Warp**：
+- 走 winit `event_loop_proxy.send_event(CustomEvent::QuitWarpFromStatusItem)`
+- main thread handler 呼叫既有 `terminate_app(TerminationMode::Cancellable)` ([`delegate.rs:397`](file:///Users/linhancheng/Desktop/projects/warp-fork/crates/warpui/src/platform/mac/delegate.rs))
+
+**Acceptance**:
+- [ ] Setting on + window 隱藏 → 點 Show Warp → window 恢復可見
+- [ ] Setting on + 完全沒 window → 點 Show Warp → 建新 window
+- [ ] Setting on → 點 Quit Warp → app 真退（process 死）
+- [ ] 既有 ⌘Q / Dock right-click Quit 路徑不變
+
+**Verification**:
+- 手動：T35 setup → 觸發 close（T37 之後可 hide）→ 點 Show Warp → window 回來
+- 手動：點 Quit → 看 wrap process 死
+
+**Dependencies**: T34, T35
+
+**Files**: `app/src/lib.rs` (CustomEvent dispatch) + `crates/warpui/src/windowing/winit/event_loop/mod.rs` 或對應 (CustomEvent variant) + `app/src/menu_bar_status_item.rs` (callback wiring) — 2-3 files
+
+**Scope**: M
+
+---
+
+### Task 37: V4.6 — Close window 攔截（hide instead of close）
+
+**Description**:
+
+**核心邏輯**：setting on **AND** 這是 last visible window → close 改 `hide_window`；otherwise 原路徑。
+
+攔截點建議在 [`app/src/pane_group/pane/terminal_pane.rs:656`](file:///Users/linhancheng/Desktop/projects/warp-fork/app/src/pane_group/pane/terminal_pane.rs) `Event::CloseRequested` 上層（pane 不知道全局 window 數，所以攔截要往上一層 — 看 `WorkspaceModel` 或 `App` level）。
+
+實際攔截位置 T37 spike 階段確認。可能：
+- (a) `close_pane_with_confirmation` 改成讀 setting + last-window check
+- (b) 新加 layer 包 close action，走 setting check 後 dispatch hide vs close
+
+「last visible window」邏輯：
+- 跑遍 `App.windows` 或 `WindowManager.windows` 找 visible 數量
+- 若這個 close 走完會變 0 → 走 hide 不走 close
+- ≥ 1 → 走原 close
+
+⌘Q 路徑（`terminate_app`）不動 — quit 仍然真退。
+
+**Acceptance**:
+- [ ] Setting on + 點 window 紅圈關閉鍵（last window）→ window 隱藏，wrap PID 仍存在
+- [ ] Setting on + ⌘W (last window) → window 隱藏
+- [ ] Setting on + 多 window 環境 close 非 last window → 走原 close（其他 window 還在）
+- [ ] Setting off + close → 走原 close（quit if last） — 既有行為不變
+- [ ] Setting on + window 隱藏狀態下 claude session 仍跑（看 process tree）
+- [ ] ⌘Q（任何 setting）→ 真 quit
+
+**Verification**:
+- 手動：setting on → 開 claude → close window → ps 看 wrap + claude 仍在 → 點 status item Show Warp → window 回來且 claude session continuity
+- 多 window：開兩 window → close 第一個 → 第二個還在；close 第二個（last）→ 隱藏不退出
+
+**Dependencies**: T32, T35（要讀 setting 跟有 status item 才能 recover window）
+
+**Files**: `app/src/pane_group/pane/terminal_pane.rs` 或上層 close handler + 可能 `crates/warpui_core/src/windowing/state.rs` (last-window query) — 2-3 files
+
+**Scope**: M（**HIGH RISK** — 攔截位置需要 spike 確認）
+
+---
+
+### Task 38: V4.7 — Smoke + S12 Dock icon question
+
+**Description**:
+
+1. 跑 PRODUCT.md V4 Success Criteria 全部 manual smoke
+2. 確認既有 quit / close 路徑無 regression（setting off 模式）
+3. `./script/presubmit` 過
+4. **S12 Dock icon 行為決策**：用此 task 機會 review 給 user，決定 (a)/(b)/(c) 走哪條
+   - 若選 (c)（默認）→ 不動 Dock，task done
+   - 若選 (a)/(b) → V4 補一個 task T39 加 `setActivationPolicy` 控制 + setting
+
+**Acceptance**:
+- [ ] PRODUCT.md V4 Success Criteria 11 項全打勾
+- [ ] presubmit 過
+- [ ] Setting off 路徑跟 V3 結束時行為一致（regression net）
+- [ ] S12 question resolved（user 決策記錄在 V4 outcome）
+
+**Verification**:
+- 完整 smoke checklist
+
+**Dependencies**: T32-T37
+
+**Files**: 無 code change（純驗證）；可能補 V4 outcome notes 在此 spec — 1 file
+
+**Scope**: S
+
+---
+
+## V4 Phase Checkpoint
+
+- [ ] T32-T38 verified
+- [ ] PRODUCT.md V4 Success Criteria 全打勾
+- [ ] `./script/presubmit` 過
+- [ ] `cargo clippy --bin warp-oss --features gui --lib -- -D warnings` 0 warning
+- [ ] Setting off 行為跟 V3 結束時完全一致（regression net）
+- [ ] **Human review** 才 close
+
+---
+
+## V4 Architecture Decisions（pre-implementation）
+
+1. **借既有 hide_window 不另發明**：`Platform::hide_window` 已是 cross-platform API（mac 實作真 hide，headless / winit 也有 stub）— V4 直接呼叫
+2. **Status item ObjC 直接 FFI 不引 `tray-icon` crate**：增加 dependency 風險 vs V4 macOS-only 簡單 ObjC 範圍 — 後者更穩
+3. **「last window check」放 close 攔截邏輯**：`hide` 行為只在「close 後會變 0 visible window」時 trigger；多 window 環境 close 中間一個仍正常 close
+4. **⌘Q 路徑不動**：`terminate_app` 走 `[NSApp terminate]` 完全不變，避免「⌘Q 也只 hide」regression
+5. **Show Warp 重用 `applicationShouldHandleReopen:`**：Dock click 重開窗的 macOS 標準路徑，menu bar 圖示「Show」走同條
+6. **Status item callbacks 走 event_loop_proxy.send_event**：跟 P6 (T23) folder picker 一樣的 macOS callback → main thread 模式，避免在 ObjC selector 內直接動 wrap state
+7. **Setting 預設 off**：opt-in 不破壞既有 user 行為；vibe coder / 重度 cmux user 自己開
+8. **不做 daemonized terminal server**：「app 不死」靠 process 持續活，不是真 quit 後重啟還原 — cmux 也是這條
+9. **跨平台留 v5+**：Linux tray 各 distro 不一致、Windows API 完全不同；V4 純 macOS 簡化、cmux fork 主用戶也是 macOS
+
+---
+
+**Phase 3 V4 update done — 2026-04-30。Spec commit 後 user 排 V3 / V4 優先序開做。**
