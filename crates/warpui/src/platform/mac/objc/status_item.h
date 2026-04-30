@@ -11,7 +11,7 @@
 }
 
 - (instancetype)initWithImageData:(NSData *)imageData
-                 showWarpContext:(void *)showWarpContext
+                  showWarpContext:(void *)showWarpContext
                   quitWarpContext:(void *)quitWarpContext;
 
 // Removes the status item from the menu bar. After calling this the receiver
@@ -26,8 +26,7 @@
 
 // Creates a new status item and returns it as a retained NSStatusItem-owning
 // WarpStatusItem. Caller must balance with warp_status_item_destroy.
-WarpStatusItem *warp_status_item_create(NSData *imageData,
-                                        void *showWarpContext,
+WarpStatusItem *warp_status_item_create(NSData *imageData, void *showWarpContext,
                                         void *quitWarpContext);
 
 // Removes from the status bar and releases the WarpStatusItem.

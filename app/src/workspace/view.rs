@@ -20794,10 +20794,10 @@ impl TypedActionView for Workspace {
                 let script = format!(
                     "try\n    set choice to button returned of (display dialog \"{prompt}\" buttons {{\"Cancel\", \"Delete\"}} default button \"Cancel\" cancel button \"Cancel\" with icon caution)\n    choice\non error\n    \"\"\nend try"
                 );
-                let confirmed = std::process::Command::new("osascript")
+                let confirmed = Command::new("osascript")
                     .args(["-e", &script])
                     .output()
-                    .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string() == "Delete")
+                    .map(|o| String::from_utf8_lossy(&o.stdout).trim() == "Delete")
                     .unwrap_or(false);
                 if confirmed {
                     crate::folder_workspace::FolderWorkspaceModel::handle(ctx).update(

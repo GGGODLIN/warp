@@ -1,5 +1,7 @@
 pub mod telemetry;
 
+use command::blocking::Command;
+
 use crate::ai::agent::conversation::ConversationStatus;
 use crate::ai::agent_management::AgentNotificationsModel;
 use crate::code::editor::{add_color, remove_color};
@@ -1826,7 +1828,7 @@ fn render_groups(
                     })
                     .on_right_mouse_down(move |ctx, _, _| {
                         let script = "try\n    set choice to choose from list {\"Open with default command\", \"Open without default command\"} with prompt \"New tab\"\n    if choice is false then\n        \"\"\n    else\n        item 1 of choice\n    end if\non error\n    \"\"\nend try";
-                        let out = std::process::Command::new("osascript")
+                        let out = Command::new("osascript")
                             .args(["-e", script])
                             .output();
                         if let Ok(o) = out {
@@ -1928,7 +1930,7 @@ fn render_groups(
                 })
                 .on_right_mouse_down(move |ctx, _, _| {
                     let script = "try\n    set choice to choose from list {\"Rename\", \"Set default command...\", \"Move Up\", \"Move Down\", \"Delete\"} with prompt \"Folder workspace\"\n    if choice is false then\n        \"\"\n    else\n        item 1 of choice\n    end if\non error\n    \"\"\nend try";
-                    let out = std::process::Command::new("osascript")
+                    let out = Command::new("osascript")
                         .args(["-e", script])
                         .output();
                     if let Ok(o) = out {
@@ -2038,7 +2040,7 @@ fn render_groups(
                 })
                 .on_right_mouse_down(move |ctx, _, _| {
                     let script = "try\n    set choice to choose from list {\"Open with default command\", \"Open without default command\"} with prompt \"New tab\"\n    if choice is false then\n        \"\"\n    else\n        item 1 of choice\n    end if\non error\n    \"\"\nend try";
-                    let out = std::process::Command::new("osascript")
+                    let out = Command::new("osascript")
                         .args(["-e", script])
                         .output();
                     if let Ok(o) = out {

@@ -103,8 +103,7 @@ impl UiComponent for FolderWorkspaceHeader {
             .font_family_id
             .expect("FolderWorkspaceHeader requires font_family_id (set via with_style)");
 
-        let arrow = if self.collapsed { "▾" } else { "▾" };
-        let arrow = if self.collapsed { "▸" } else { arrow };
+        let arrow = if self.collapsed { "▸" } else { "▾" };
         let warn = if self.folder_missing { " ⚠" } else { "" };
         let title_label = format!("{} 📁 {}{}", arrow, self.name, warn);
 

@@ -7,7 +7,7 @@ void warp_status_item_context_freed(void *context);
 @implementation WarpStatusItem
 
 - (instancetype)initWithImageData:(NSData *)imageData
-                 showWarpContext:(void *)showWarpContext
+                  showWarpContext:(void *)showWarpContext
                   quitWarpContext:(void *)quitWarpContext {
     self = [super init];
     if (self) {
@@ -33,17 +33,15 @@ void warp_status_item_context_freed(void *context);
 
         NSMenu *menu = [[[NSMenu alloc] initWithTitle:@""] autorelease];
 
-        NSMenuItem *showItem =
-            [[[NSMenuItem alloc] initWithTitle:@"Show Warp"
-                                        action:@selector(showWarpClicked:)
-                                 keyEquivalent:@""] autorelease];
+        NSMenuItem *showItem = [[[NSMenuItem alloc] initWithTitle:@"Show Warp"
+                                                           action:@selector(showWarpClicked:)
+                                                    keyEquivalent:@""] autorelease];
         [showItem setTarget:self];
         [menu addItem:showItem];
 
-        NSMenuItem *quitItem =
-            [[[NSMenuItem alloc] initWithTitle:@"Quit Warp"
-                                        action:@selector(quitWarpClicked:)
-                                 keyEquivalent:@""] autorelease];
+        NSMenuItem *quitItem = [[[NSMenuItem alloc] initWithTitle:@"Quit Warp"
+                                                           action:@selector(quitWarpClicked:)
+                                                    keyEquivalent:@""] autorelease];
         [quitItem setTarget:self];
         [menu addItem:quitItem];
 
@@ -93,12 +91,11 @@ void warp_status_item_context_freed(void *context);
 
 @end
 
-WarpStatusItem *warp_status_item_create(NSData *imageData,
-                                        void *showWarpContext,
+WarpStatusItem *warp_status_item_create(NSData *imageData, void *showWarpContext,
                                         void *quitWarpContext) {
     return [[WarpStatusItem alloc] initWithImageData:imageData
                                      showWarpContext:showWarpContext
-                                      quitWarpContext:quitWarpContext];
+                                     quitWarpContext:quitWarpContext];
 }
 
 void warp_status_item_destroy(WarpStatusItem *item) {
