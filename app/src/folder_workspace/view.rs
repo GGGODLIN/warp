@@ -108,6 +108,7 @@ impl UiComponent for FolderWorkspaceHeader {
             font_family,
             HEADER_TITLE_FONT_SIZE,
         )
+        .soft_wrap(false)
         .with_clip(ClipConfig::ellipsis());
         if let Some(color) = self.title_color {
             title_text = title_text.with_color(color);
@@ -167,6 +168,7 @@ impl UiComponent for FolderWorkspaceHeader {
                 font_family,
                 HEADER_PATH_FONT_SIZE,
             )
+            .soft_wrap(false)
             .with_clip(ClipConfig::ellipsis());
             if let Some(color) = self.path_color {
                 path_text = path_text.with_color(color);
