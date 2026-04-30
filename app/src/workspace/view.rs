@@ -20389,11 +20389,35 @@ impl TypedActionView for Workspace {
                 path,
             } => {
                 let workspace_id = *folder_workspace_id;
-                let initial_directory = if path.exists() {
+                let path_missing = !path.exists();
+                let initial_directory = if !path_missing {
                     Some(path.clone())
                 } else {
                     std::env::var("HOME").ok().map(PathBuf::from)
                 };
+                if path_missing {
+                    let already = crate::folder_workspace::FolderWorkspaceModel::handle(ctx)
+                        .as_ref(ctx)
+                        .was_missing_toast_shown(workspace_id);
+                    if !already {
+                        let path_display = path.display().to_string();
+                        self.toast_stack.update(ctx, |toast_stack, ctx| {
+                            toast_stack.add_ephemeral_toast(
+                                DismissibleToast::default(format!(
+                                    "Folder {} is missing; opened tab in home directory",
+                                    path_display
+                                )),
+                                ctx,
+                            );
+                        });
+                        crate::folder_workspace::FolderWorkspaceModel::handle(ctx).update(
+                            ctx,
+                            move |model, _model_ctx| {
+                                model.record_missing_toast_shown(workspace_id);
+                            },
+                        );
+                    }
+                }
                 self.add_tab_with_pane_layout(
                     PanesLayout::SingleTerminal(Box::new(NewTerminalOptions {
                         initial_directory,
@@ -20474,23 +20498,51 @@ impl TypedActionView for Workspace {
             }
             DeleteFolderWorkspace { id } => {
                 let id = *id;
-                let fallback_id = crate::folder_workspace::FolderWorkspaceModel::handle(ctx)
-                    .as_ref(ctx)
+                let model = crate::folder_workspace::FolderWorkspaceModel::handle(ctx).as_ref(ctx);
+                let workspace_name = model
                     .all()
                     .iter()
-                    .find(|w| w.id != id)
-                    .map(|w| w.id);
-                crate::folder_workspace::FolderWorkspaceModel::handle(ctx).update(
-                    ctx,
-                    move |model, model_ctx| {
-                        if let Err(err) = model.delete_workspace(id, model_ctx) {
-                            log::warn!("Failed to delete folder workspace: {err}");
-                        }
-                    },
+                    .find(|w| w.id == id)
+                    .map(|w| w.name.clone())
+                    .unwrap_or_default();
+                let fallback_id = model.all().iter().find(|w| w.id != id).map(|w| w.id);
+                let fallback_name = fallback_id
+                    .and_then(|fid| {
+                        model
+                            .all()
+                            .iter()
+                            .find(|w| w.id == fid)
+                            .map(|w| w.name.clone())
+                    })
+                    .unwrap_or_else(|| "(no workspace)".to_string());
+                let prompt = format!(
+                    "Delete workspace \\\"{}\\\"? Tabs will move to \\\"{}\\\".",
+                    workspace_name.replace('\\', "\\\\").replace('"', "\\\""),
+                    fallback_name.replace('\\', "\\\\").replace('"', "\\\"")
                 );
-                for tab in self.tabs.iter_mut() {
-                    if tab.folder_workspace_id == Some(id) {
-                        tab.folder_workspace_id = fallback_id;
+                let script = format!(
+                    "try\n    set choice to button returned of (display dialog \"{prompt}\" buttons {{\"Cancel\", \"Delete\"}} default button \"Cancel\" cancel button \"Cancel\" with icon caution)\n    choice\non error\n    \"\"\nend try"
+                );
+                let confirmed = std::process::Command::new("osascript")
+                    .args(["-e", &script])
+                    .output()
+                    .map(|o| {
+                        String::from_utf8_lossy(&o.stdout).trim().to_string() == "Delete"
+                    })
+                    .unwrap_or(false);
+                if confirmed {
+                    crate::folder_workspace::FolderWorkspaceModel::handle(ctx).update(
+                        ctx,
+                        move |model, model_ctx| {
+                            if let Err(err) = model.delete_workspace(id, model_ctx) {
+                                log::warn!("Failed to delete folder workspace: {err}");
+                            }
+                        },
+                    );
+                    for tab in self.tabs.iter_mut() {
+                        if tab.folder_workspace_id == Some(id) {
+                            tab.folder_workspace_id = fallback_id;
+                        }
                     }
                 }
                 ctx.notify();

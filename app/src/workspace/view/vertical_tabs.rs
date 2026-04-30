@@ -569,6 +569,7 @@ pub(super) struct VerticalTabsPanelState {
     resizable_state: ResizableStateHandle,
     group_mouse_states: RefCell<HashMap<EntityId, PaneGroupStateHandles>>,
     pane_row_mouse_states: RefCell<HashMap<PaneId, MouseStateHandle>>,
+    folder_workspace_header_hover_states: RefCell<HashMap<i32, MouseStateHandle>>,
     pane_title_mouse_states: RefCell<HashMap<PaneId, MouseStateHandle>>,
     pane_badge_mouse_states: RefCell<HashMap<PaneId, PaneRowBadgeMouseStates>>,
     detail_pane_badge_mouse_states: RefCell<HashMap<PaneId, PaneRowBadgeMouseStates>>,
@@ -604,6 +605,7 @@ impl Default for VerticalTabsPanelState {
             resizable_state: resizable_state_handle(PANEL_WIDTH),
             group_mouse_states: RefCell::default(),
             pane_row_mouse_states: RefCell::default(),
+            folder_workspace_header_hover_states: RefCell::default(),
             pane_title_mouse_states: RefCell::default(),
             pane_badge_mouse_states: RefCell::default(),
             detail_pane_badge_mouse_states: RefCell::default(),
@@ -1714,24 +1716,18 @@ fn render_groups(
             .build()
             .finish();
 
-            let mut header_row = Flex::row()
-                .with_main_axis_size(MainAxisSize::Max)
-                .with_cross_axis_alignment(CrossAxisAlignment::Center)
-                .with_main_axis_alignment(MainAxisAlignment::SpaceBetween);
-            header_row.add_child(Shrinkable::new(1., header_inner).finish());
-
+            let icon_color = theme.sub_text_color(theme.background());
             let make_icon_button =
-                |label: &'static str, action: WorkspaceAction| -> Box<dyn Element> {
-                    let text = Text::new(
-                        std::borrow::Cow::Borrowed(label),
-                        appearance.ui_font_family(),
-                        12.0,
+                |icon: WarpIcon, action: WorkspaceAction| -> Box<dyn Element> {
+                    let icon_el = ConstrainedBox::new(
+                        icon.to_warpui_icon(icon_color).finish(),
                     )
-                    .with_color(theme.sub_text_color(theme.background()).into())
+                    .with_width(GROUP_ACTION_BUTTON_ICON_SIZE)
+                    .with_height(GROUP_ACTION_BUTTON_ICON_SIZE)
                     .finish();
                     EventHandler::new(
-                        Container::new(text)
-                            .with_padding(Padding::uniform(4.))
+                        Container::new(icon_el)
+                            .with_padding(Padding::uniform(GROUP_ACTION_BUTTON_PADDING))
                             .finish(),
                     )
                     .on_left_mouse_down(move |ctx, _, _| {
@@ -1746,24 +1742,45 @@ fn render_groups(
                 .with_cross_axis_alignment(CrossAxisAlignment::Center)
                 .with_spacing(2.);
             buttons_row.add_child(make_icon_button(
-                "✎",
+                WarpIcon::Pencil,
                 WorkspaceAction::RenameFolderWorkspace { id: fw_id },
             ));
             buttons_row.add_child(make_icon_button(
-                "↑",
+                WarpIcon::ArrowUp,
                 WorkspaceAction::MoveFolderWorkspaceUp { id: fw_id },
             ));
             buttons_row.add_child(make_icon_button(
-                "↓",
+                WarpIcon::ArrowDown,
                 WorkspaceAction::MoveFolderWorkspaceDown { id: fw_id },
             ));
             buttons_row.add_child(make_icon_button(
-                "✕",
+                WarpIcon::X,
                 WorkspaceAction::DeleteFolderWorkspace { id: fw_id },
             ));
-            header_row.add_child(buttons_row.finish());
+            let buttons_row_el = buttons_row.finish();
 
-            let header_clickable = EventHandler::new(header_row.finish())
+            let hover_state = state
+                .folder_workspace_header_hover_states
+                .borrow_mut()
+                .entry(fw_id)
+                .or_default()
+                .clone();
+
+            let header_with_hover = Hoverable::new(hover_state, move |mouse_state| {
+                let is_hovered = mouse_state.is_mouse_over_element();
+                let mut row = Flex::row()
+                    .with_main_axis_size(MainAxisSize::Max)
+                    .with_cross_axis_alignment(CrossAxisAlignment::Center)
+                    .with_main_axis_alignment(MainAxisAlignment::SpaceBetween);
+                row.add_child(Shrinkable::new(1., header_inner).finish());
+                if is_hovered {
+                    row.add_child(buttons_row_el);
+                }
+                row.finish()
+            })
+            .finish();
+
+            let header_clickable = EventHandler::new(header_with_hover)
                 .on_left_mouse_down(move |ctx, _, _| {
                     ctx.dispatch_typed_action(
                         WorkspaceAction::ToggleFolderWorkspaceCollapsed { id: fw_id },

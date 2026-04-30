@@ -5,6 +5,7 @@
 //! app init from [`PersistedData::folder_workspaces`](crate::persistence::PersistedData).
 //! Pattern: [`crate::projects::ProjectManagementModel`].
 
+use std::collections::HashSet;
 use std::sync::mpsc::SyncSender;
 
 use warpui::{Entity, ModelContext, SingletonEntity};
@@ -25,6 +26,7 @@ pub struct FolderWorkspaceModel {
     #[expect(unused, reason = "T9 will wire DB writes via ModelEvent variants")]
     model_event_sender: Option<SyncSender<ModelEvent>>,
     last_active_id: Option<i32>,
+    toasted_missing_session: HashSet<i32>,
 }
 
 impl Entity for FolderWorkspaceModel {
@@ -48,7 +50,16 @@ impl FolderWorkspaceModel {
             workspaces: persisted,
             model_event_sender,
             last_active_id,
+            toasted_missing_session: HashSet::new(),
         }
+    }
+
+    pub fn was_missing_toast_shown(&self, id: i32) -> bool {
+        self.toasted_missing_session.contains(&id)
+    }
+
+    pub fn record_missing_toast_shown(&mut self, id: i32) {
+        self.toasted_missing_session.insert(id);
     }
 
     pub fn all(&self) -> &[FolderWorkspace] {
