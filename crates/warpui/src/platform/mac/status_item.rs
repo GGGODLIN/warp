@@ -24,8 +24,7 @@ pub type StatusItemAction = Box<dyn Fn(&mut AppContext) + 'static>;
 type RawCallback = Box<dyn Fn() + 'static>;
 
 extern "C" {
-    fn warp_status_item_create(image_data: id, show_ctx: *mut c_void, quit_ctx: *mut c_void)
-        -> id;
+    fn warp_status_item_create(image_data: id, show_ctx: *mut c_void, quit_ctx: *mut c_void) -> id;
     fn warp_status_item_destroy(item: id);
 }
 

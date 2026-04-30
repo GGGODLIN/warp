@@ -1657,8 +1657,7 @@ fn render_groups(
     // upstream regressions stay contained.
     if FeatureFlag::FolderWorkspacesEnabled.is_enabled() {
         let workspaces_snapshot: Vec<crate::folder_workspace::FolderWorkspace> = {
-            let model =
-                crate::folder_workspace::FolderWorkspaceModel::handle(app).as_ref(app);
+            let model = crate::folder_workspace::FolderWorkspaceModel::handle(app).as_ref(app);
             model.all().to_vec()
         };
         let known_ids: std::collections::HashSet<i32> =
@@ -1711,9 +1710,8 @@ fn render_groups(
             .current_workspace_state
             .folder_workspace_default_command_being_edited();
         let folder_workspace_rename_editor = workspace.folder_workspace_rename_editor.clone();
-        let folder_workspace_default_command_editor = workspace
-            .folder_workspace_default_command_editor
-            .clone();
+        let folder_workspace_default_command_editor =
+            workspace.folder_workspace_default_command_editor.clone();
 
         for fw in &workspaces_snapshot {
             let folder_missing = !std::path::Path::new(&fw.path).exists();
@@ -1751,8 +1749,7 @@ fn render_groups(
                 )
                 .with_color(theme.main_text_color(theme.background()).into())
                 .finish();
-                let editor_el =
-                    ChildView::new(&folder_workspace_default_command_editor).finish();
+                let editor_el = ChildView::new(&folder_workspace_default_command_editor).finish();
                 let mut col = Flex::column()
                     .with_main_axis_size(MainAxisSize::Min)
                     .with_cross_axis_alignment(CrossAxisAlignment::Stretch)
@@ -1858,25 +1855,22 @@ fn render_groups(
             }
 
             let icon_color = theme.sub_text_color(theme.background());
-            let make_icon_button =
-                |icon: WarpIcon, action: WorkspaceAction| -> Box<dyn Element> {
-                    let icon_el = ConstrainedBox::new(
-                        icon.to_warpui_icon(icon_color).finish(),
-                    )
+            let make_icon_button = |icon: WarpIcon, action: WorkspaceAction| -> Box<dyn Element> {
+                let icon_el = ConstrainedBox::new(icon.to_warpui_icon(icon_color).finish())
                     .with_width(GROUP_ACTION_BUTTON_ICON_SIZE)
                     .with_height(GROUP_ACTION_BUTTON_ICON_SIZE)
                     .finish();
-                    EventHandler::new(
-                        Container::new(icon_el)
-                            .with_padding(Padding::uniform(GROUP_ACTION_BUTTON_PADDING))
-                            .finish(),
-                    )
-                    .on_left_mouse_down(move |ctx, _, _| {
-                        ctx.dispatch_typed_action(action.clone());
-                        DispatchEventResult::StopPropagation
-                    })
-                    .finish()
-                };
+                EventHandler::new(
+                    Container::new(icon_el)
+                        .with_padding(Padding::uniform(GROUP_ACTION_BUTTON_PADDING))
+                        .finish(),
+                )
+                .on_left_mouse_down(move |ctx, _, _| {
+                    ctx.dispatch_typed_action(action.clone());
+                    DispatchEventResult::StopPropagation
+                })
+                .finish()
+            };
 
             let mut buttons_row = Flex::row()
                 .with_main_axis_size(MainAxisSize::Min)
@@ -1975,12 +1969,10 @@ fn render_groups(
                 .clone();
             let header_draggable = Draggable::new(drag_state, header_clickable)
                 .on_drag_start(move |ctx, _, rect| {
-                    ctx.dispatch_typed_action(
-                        WorkspaceAction::StartFolderWorkspaceDrag {
-                            id: fw_id,
-                            initial_y: rect.origin().y(),
-                        },
-                    );
+                    ctx.dispatch_typed_action(WorkspaceAction::StartFolderWorkspaceDrag {
+                        id: fw_id,
+                        initial_y: rect.origin().y(),
+                    });
                 })
                 .on_drag(move |ctx, _, rect, _| {
                     ctx.dispatch_typed_action(WorkspaceAction::DragFolderWorkspace {

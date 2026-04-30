@@ -3290,11 +3290,10 @@ fn read_sqlite_data(
     {
         log::warn!("Folder workspace bootstrap failed: {err}");
     }
-    let folder_workspaces =
-        crate::folder_workspace::manager::get_all(conn).unwrap_or_else(|err| {
-            log::warn!("Failed to load folder workspaces: {err}");
-            Vec::new()
-        });
+    let folder_workspaces = crate::folder_workspace::manager::get_all(conn).unwrap_or_else(|err| {
+        log::warn!("Failed to load folder workspaces: {err}");
+        Vec::new()
+    });
     let project_rules = get_all_project_rules(conn)?;
     let ignored_suggestions = get_all_ignored_suggestions(conn)?;
     let mcp_server_installations = get_all_mcp_server_installations(conn)?;

@@ -42,7 +42,8 @@ mod tests {
     #[test]
     fn round_trip_through_in_memory_sqlite() {
         let mut conn = SqliteConnection::establish(":memory:").unwrap();
-        conn.run_pending_migrations(persistence::MIGRATIONS).unwrap();
+        conn.run_pending_migrations(persistence::MIGRATIONS)
+            .unwrap();
 
         let new = NewFolderWorkspace {
             name: "test".to_string(),
@@ -74,7 +75,8 @@ mod tests {
     #[test]
     fn default_command_round_trip() {
         let mut conn = SqliteConnection::establish(":memory:").unwrap();
-        conn.run_pending_migrations(persistence::MIGRATIONS).unwrap();
+        conn.run_pending_migrations(persistence::MIGRATIONS)
+            .unwrap();
 
         let with_cmd = NewFolderWorkspace {
             name: "with-cmd".to_string(),

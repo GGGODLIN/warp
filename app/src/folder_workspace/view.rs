@@ -108,13 +108,10 @@ impl UiComponent for FolderWorkspaceHeader {
         let warn = if self.folder_missing { " ⚠" } else { "" };
         let title_label = format!("{} 📁 {}{}", arrow, self.name, warn);
 
-        let mut title_text = Text::new(
-            Cow::Owned(title_label),
-            font_family,
-            HEADER_TITLE_FONT_SIZE,
-        )
-        .soft_wrap(false)
-        .with_clip(ClipConfig::ellipsis());
+        let mut title_text =
+            Text::new(Cow::Owned(title_label), font_family, HEADER_TITLE_FONT_SIZE)
+                .soft_wrap(false)
+                .with_clip(ClipConfig::ellipsis());
         if let Some(color) = self.title_color {
             title_text = title_text.with_color(color);
         }
@@ -139,18 +136,12 @@ impl UiComponent for FolderWorkspaceHeader {
                 .with_color(badge_color)
                 .finish();
             let mut badge = Container::new(badge_text)
-                .with_padding(
-                    Padding::uniform(1.).with_left(6.).with_right(6.),
-                )
+                .with_padding(Padding::uniform(1.).with_left(6.).with_right(6.))
                 .with_corner_radius(CornerRadius::with_all(Radius::Pixels(8.)));
             if let Some(bg) = self.badge_background {
                 badge = badge.with_background(bg);
             }
-            title_row.add_child(
-                Container::new(badge.finish())
-                    .with_margin_left(8.)
-                    .finish(),
-            );
+            title_row.add_child(Container::new(badge.finish()).with_margin_left(8.).finish());
         }
 
         let mut col = Flex::column()
@@ -161,13 +152,10 @@ impl UiComponent for FolderWorkspaceHeader {
         col.add_child(title_row.finish());
 
         if !self.path.is_empty() {
-            let mut path_text = Text::new(
-                Cow::Owned(self.path),
-                font_family,
-                HEADER_PATH_FONT_SIZE,
-            )
-            .soft_wrap(false)
-            .with_clip(ClipConfig::ellipsis());
+            let mut path_text =
+                Text::new(Cow::Owned(self.path), font_family, HEADER_PATH_FONT_SIZE)
+                    .soft_wrap(false)
+                    .with_clip(ClipConfig::ellipsis());
             if let Some(color) = self.path_color {
                 path_text = path_text.with_color(color);
             }

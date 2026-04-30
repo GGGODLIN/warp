@@ -22,7 +22,10 @@ use crate::persistence::ModelEvent;
 use super::FolderWorkspace;
 
 #[derive(Debug)]
-#[allow(dead_code, reason = "event variants emitted for downstream subscribers")]
+#[allow(
+    dead_code,
+    reason = "event variants emitted for downstream subscribers"
+)]
 pub enum FolderWorkspaceEvent {
     Created { id: i32 },
     Updated { id: i32 },
@@ -48,10 +51,7 @@ impl FolderWorkspaceModel {
         model_event_sender: Option<SyncSender<ModelEvent>>,
         _ctx: &mut ModelContext<Self>,
     ) -> Self {
-        log::debug!(
-            "Loading {} persisted folder workspaces",
-            persisted.len()
-        );
+        log::debug!("Loading {} persisted folder workspaces", persisted.len());
         let last_active_id = persisted.first().map(|w| w.id);
         Self {
             workspaces: persisted,
@@ -236,11 +236,7 @@ impl FolderWorkspaceModel {
         let Some(idx) = self.workspaces.iter().position(|w| w.id == id) else {
             return Ok(());
         };
-        let fallback_id = self
-            .workspaces
-            .iter()
-            .find(|w| w.id != id)
-            .map(|w| w.id);
+        let fallback_id = self.workspaces.iter().find(|w| w.id != id).map(|w| w.id);
         self.workspaces.remove(idx);
         if self.last_active_id == Some(id) {
             self.last_active_id = fallback_id;

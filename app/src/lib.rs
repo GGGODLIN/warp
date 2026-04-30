@@ -6,8 +6,6 @@ mod alloc;
 mod antivirus;
 #[cfg(target_os = "macos")]
 mod app_menus;
-#[cfg(target_os = "macos")]
-mod menu_bar_status_item;
 mod app_services;
 mod app_state;
 mod auth;
@@ -50,6 +48,8 @@ mod linear;
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 mod login_item;
 mod menu;
+#[cfg(target_os = "macos")]
+mod menu_bar_status_item;
 mod modal;
 mod network;
 mod notebooks;
@@ -1937,9 +1937,7 @@ fn app_callbacks(is_integration_test: bool) -> warpui::platform::AppCallbacks {
                 let close_to_menu_bar =
                     *crate::window_settings::WindowSettings::as_ref(ctx).close_to_menu_bar;
                 if close_to_menu_bar && ctx.window_ids().count() == 1 {
-                    log::info!(
-                        "close_to_menu_bar: hiding {window_id:?} instead of closing"
-                    );
+                    log::info!("close_to_menu_bar: hiding {window_id:?} instead of closing");
                     ctx.windows().hide_window(window_id);
                     return ApproveTerminateResult::Cancel;
                 }

@@ -1337,7 +1337,10 @@ impl Workspace {
         event: &EditorEvent,
         ctx: &mut ViewContext<Self>,
     ) {
-        if self.current_workspace_state.is_folder_workspace_being_renamed() {
+        if self
+            .current_workspace_state
+            .is_folder_workspace_being_renamed()
+        {
             match event {
                 EditorEvent::Blurred | EditorEvent::Enter => {
                     self.finish_folder_workspace_rename(ctx);
@@ -1457,7 +1460,10 @@ impl Workspace {
     }
 
     fn cancel_folder_workspace_rename(&mut self, ctx: &mut ViewContext<Self>) {
-        if self.current_workspace_state.is_folder_workspace_being_renamed() {
+        if self
+            .current_workspace_state
+            .is_folder_workspace_being_renamed()
+        {
             self.current_workspace_state
                 .clear_folder_workspace_being_renamed();
             self.folder_workspace_rename_editor
@@ -1524,7 +1530,11 @@ impl Workspace {
                 editor.clear_buffer_and_reset_undo_stack(ctx);
             });
         let trimmed = new_value.trim().to_string();
-        let normalized = if trimmed.is_empty() { None } else { Some(trimmed) };
+        let normalized = if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed)
+        };
         crate::folder_workspace::FolderWorkspaceModel::handle(ctx).update(
             ctx,
             move |model, model_ctx| {
@@ -3758,8 +3768,7 @@ impl Workspace {
                         self.tabs[tab_index].default_directory_color =
                             saved_tab.default_directory_color;
                         self.tabs[tab_index].selected_color = saved_tab.selected_color;
-                        self.tabs[tab_index].folder_workspace_id =
-                            saved_tab.folder_workspace_id;
+                        self.tabs[tab_index].folder_workspace_id = saved_tab.folder_workspace_id;
 
                         let pane_group = self.tabs[tab_index].pane_group.clone();
 
@@ -12047,10 +12056,7 @@ impl Workspace {
 
         if new_index != current_index {
             if FeatureFlag::FolderWorkspacesEnabled.is_enabled() {
-                let same_workspace = self
-                    .tabs
-                    .get(new_index)
-                    .and_then(|t| t.folder_workspace_id)
+                let same_workspace = self.tabs.get(new_index).and_then(|t| t.folder_workspace_id)
                     == self
                         .tabs
                         .get(current_index)
@@ -20572,9 +20578,10 @@ impl TypedActionView for Workspace {
                             .file_name()
                             .map(|s| s.to_string_lossy().to_string())
                             .unwrap_or_else(|| "Workspace".to_string());
-                        ctx.dispatch_typed_action(
-                            &WorkspaceAction::AddFolderWorkspace { name, path },
-                        );
+                        ctx.dispatch_typed_action(&WorkspaceAction::AddFolderWorkspace {
+                            name,
+                            path,
+                        });
                     },
                     warpui::platform::FilePickerConfiguration::new().folders_only(),
                 );
@@ -20610,9 +20617,7 @@ impl TypedActionView for Workspace {
                     move |model, model_ctx| {
                         model.set_last_active(id);
                         if let Err(err) = model.toggle_collapsed(id, model_ctx) {
-                            log::warn!(
-                                "Failed to toggle folder workspace collapsed: {err}"
-                            );
+                            log::warn!("Failed to toggle folder workspace collapsed: {err}");
                         }
                     },
                 );
@@ -20672,14 +20677,11 @@ impl TypedActionView for Workspace {
                     PanesLayout::Template(
                         crate::launch_configs::launch_config::PaneTemplateType::PaneTemplate {
                             cwd,
-                            commands: vec![
-                                crate::launch_configs::launch_config::CommandTemplate {
-                                    exec: cmd,
-                                },
-                            ],
+                            commands: vec![crate::launch_configs::launch_config::CommandTemplate {
+                                exec: cmd,
+                            }],
                             is_focused: Some(true),
-                            pane_mode:
-                                crate::launch_configs::launch_config::PaneMode::Terminal,
+                            pane_mode: crate::launch_configs::launch_config::PaneMode::Terminal,
                             shell: None,
                         },
                     )
@@ -20689,12 +20691,7 @@ impl TypedActionView for Workspace {
                         ..Default::default()
                     }))
                 };
-                self.add_tab_with_pane_layout(
-                    layout,
-                    Arc::new(HashMap::new()),
-                    None,
-                    ctx,
-                );
+                self.add_tab_with_pane_layout(layout, Arc::new(HashMap::new()), None, ctx);
                 let idx = self.active_tab_index;
                 if let Some(tab) = self.tabs.get_mut(idx) {
                     tab.folder_workspace_id = Some(workspace_id);
@@ -20745,8 +20742,7 @@ impl TypedActionView for Workspace {
             DragFolderWorkspace { id, current_y } => {
                 let id = *id;
                 let current_y = *current_y;
-                let Some((baseline_id, baseline_y)) = self.folder_workspace_drag_baseline
-                else {
+                let Some((baseline_id, baseline_y)) = self.folder_workspace_drag_baseline else {
                     return;
                 };
                 if baseline_id != id {
@@ -20759,12 +20755,8 @@ impl TypedActionView for Workspace {
                     crate::folder_workspace::FolderWorkspaceModel::handle(ctx).update(
                         ctx,
                         move |model, model_ctx| {
-                            if let Err(err) =
-                                model.move_workspace(id, direction, model_ctx)
-                            {
-                                log::warn!(
-                                    "Failed to move folder workspace via drag: {err}"
-                                );
+                            if let Err(err) = model.move_workspace(id, direction, model_ctx) {
+                                log::warn!("Failed to move folder workspace via drag: {err}");
                             }
                         },
                     );
@@ -20805,9 +20797,7 @@ impl TypedActionView for Workspace {
                 let confirmed = std::process::Command::new("osascript")
                     .args(["-e", &script])
                     .output()
-                    .map(|o| {
-                        String::from_utf8_lossy(&o.stdout).trim().to_string() == "Delete"
-                    })
+                    .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string() == "Delete")
                     .unwrap_or(false);
                 if confirmed {
                     crate::folder_workspace::FolderWorkspaceModel::handle(ctx).update(

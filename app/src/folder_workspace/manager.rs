@@ -179,7 +179,8 @@ mod tests {
 
     fn setup_conn() -> SqliteConnection {
         let mut conn = SqliteConnection::establish(":memory:").unwrap();
-        conn.run_pending_migrations(persistence::MIGRATIONS).unwrap();
+        conn.run_pending_migrations(persistence::MIGRATIONS)
+            .unwrap();
         conn
     }
 
@@ -375,7 +376,10 @@ mod tests {
 
         set_default_command(&mut conn, fw.id, Some("claude".to_string())).unwrap();
         assert_eq!(
-            get_by_id(&mut conn, fw.id).unwrap().default_command.as_deref(),
+            get_by_id(&mut conn, fw.id)
+                .unwrap()
+                .default_command
+                .as_deref(),
             Some("claude"),
         );
 
