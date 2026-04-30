@@ -162,6 +162,15 @@ pub enum WorkspaceAction {
     DeleteFolderWorkspace {
         id: i32,
     },
+    StartFolderWorkspaceDrag {
+        id: i32,
+        initial_y: f32,
+    },
+    DragFolderWorkspace {
+        id: i32,
+        current_y: f32,
+    },
+    DropFolderWorkspace,
     AddTerminalTab {
         hide_homepage: bool,
     },
@@ -763,6 +772,9 @@ impl WorkspaceAction {
             | MoveFolderWorkspaceUp { .. }
             | MoveFolderWorkspaceDown { .. }
             | DeleteFolderWorkspace { .. }
+            | StartFolderWorkspaceDrag { .. }
+            | DragFolderWorkspace { .. }
+            | DropFolderWorkspace
             | AddTerminalTab { .. }
             | AddTabWithShell { .. }
             | AddGetStartedTab

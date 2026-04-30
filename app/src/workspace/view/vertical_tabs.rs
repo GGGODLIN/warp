@@ -570,6 +570,7 @@ pub(super) struct VerticalTabsPanelState {
     group_mouse_states: RefCell<HashMap<EntityId, PaneGroupStateHandles>>,
     pane_row_mouse_states: RefCell<HashMap<PaneId, MouseStateHandle>>,
     folder_workspace_header_hover_states: RefCell<HashMap<i32, MouseStateHandle>>,
+    folder_workspace_drag_states: RefCell<HashMap<i32, warpui::elements::DraggableState>>,
     pane_title_mouse_states: RefCell<HashMap<PaneId, MouseStateHandle>>,
     pane_badge_mouse_states: RefCell<HashMap<PaneId, PaneRowBadgeMouseStates>>,
     detail_pane_badge_mouse_states: RefCell<HashMap<PaneId, PaneRowBadgeMouseStates>>,
@@ -606,6 +607,7 @@ impl Default for VerticalTabsPanelState {
             group_mouse_states: RefCell::default(),
             pane_row_mouse_states: RefCell::default(),
             folder_workspace_header_hover_states: RefCell::default(),
+            folder_workspace_drag_states: RefCell::default(),
             pane_title_mouse_states: RefCell::default(),
             pane_badge_mouse_states: RefCell::default(),
             detail_pane_badge_mouse_states: RefCell::default(),
@@ -1897,7 +1899,34 @@ fn render_groups(
                     DispatchEventResult::StopPropagation
                 })
                 .finish();
-            groups.add_child(header_clickable);
+
+            let drag_state = state
+                .folder_workspace_drag_states
+                .borrow_mut()
+                .entry(fw_id)
+                .or_default()
+                .clone();
+            let header_draggable = Draggable::new(drag_state, header_clickable)
+                .on_drag_start(move |ctx, _, rect| {
+                    ctx.dispatch_typed_action(
+                        WorkspaceAction::StartFolderWorkspaceDrag {
+                            id: fw_id,
+                            initial_y: rect.origin().y(),
+                        },
+                    );
+                })
+                .on_drag(move |ctx, _, rect, _| {
+                    ctx.dispatch_typed_action(WorkspaceAction::DragFolderWorkspace {
+                        id: fw_id,
+                        current_y: rect.origin().y(),
+                    });
+                })
+                .on_drop(|ctx, _, _, _| {
+                    ctx.dispatch_typed_action(WorkspaceAction::DropFolderWorkspace);
+                })
+                .with_drag_axis(DragAxis::VerticalOnly)
+                .finish();
+            groups.add_child(header_draggable);
 
             if !fw.collapsed {
                 if let Some(indices) = by_workspace.get(&fw.id) {

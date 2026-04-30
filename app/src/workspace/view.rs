@@ -897,6 +897,7 @@ pub struct Workspace {
     tab_rename_editor: ViewHandle<EditorView>,
     pane_rename_editor: ViewHandle<EditorView>,
     folder_workspace_rename_editor: ViewHandle<EditorView>,
+    folder_workspace_drag_baseline: Option<(i32, f32)>,
     vertical_tabs_search_input: ViewHandle<EditorView>,
     tips_completed: ModelHandle<TipsCompleted>,
     user_default_shell_unsupported_banner_model_handle: ModelHandle<BannerState>,
@@ -3131,6 +3132,7 @@ impl Workspace {
             tab_rename_editor: Self::tab_rename_editor(ctx),
             pane_rename_editor: Self::pane_rename_editor(ctx),
             folder_workspace_rename_editor: Self::folder_workspace_rename_editor(ctx),
+            folder_workspace_drag_baseline: None,
             vertical_tabs_search_input: Self::vertical_tabs_search_input(ctx),
             tips_completed,
             user_default_shell_unsupported_banner_model_handle,
@@ -20563,6 +20565,42 @@ impl TypedActionView for Workspace {
                     },
                 );
                 ctx.notify();
+            }
+            StartFolderWorkspaceDrag { id, initial_y } => {
+                self.folder_workspace_drag_baseline = Some((*id, *initial_y));
+            }
+            DragFolderWorkspace { id, current_y } => {
+                let id = *id;
+                let current_y = *current_y;
+                let Some((baseline_id, baseline_y)) = self.folder_workspace_drag_baseline
+                else {
+                    return;
+                };
+                if baseline_id != id {
+                    return;
+                }
+                const FOLDER_WORKSPACE_DRAG_THRESHOLD: f32 = 40.0;
+                let delta = current_y - baseline_y;
+                if delta.abs() > FOLDER_WORKSPACE_DRAG_THRESHOLD {
+                    let direction: i32 = if delta > 0.0 { 1 } else { -1 };
+                    crate::folder_workspace::FolderWorkspaceModel::handle(ctx).update(
+                        ctx,
+                        move |model, model_ctx| {
+                            if let Err(err) =
+                                model.move_workspace(id, direction, model_ctx)
+                            {
+                                log::warn!(
+                                    "Failed to move folder workspace via drag: {err}"
+                                );
+                            }
+                        },
+                    );
+                    self.folder_workspace_drag_baseline = Some((id, current_y));
+                    ctx.notify();
+                }
+            }
+            DropFolderWorkspace => {
+                self.folder_workspace_drag_baseline = None;
             }
             DeleteFolderWorkspace { id } => {
                 let id = *id;
