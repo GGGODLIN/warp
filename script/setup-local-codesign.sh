@@ -69,16 +69,38 @@ openssl req -new -x509 \
     -days 3650 \
     -config "$CONFIG" \
     -extensions v3_req >/dev/null 2>&1
+# Apple `security import` rejects empty PKCS#12 passwords on some macOS
+# versions ("MAC verification failed"); use a fixed throwaway password
+# only for the import step — it never leaves this script.
+P12_PASS="warp-fork-codesign-local"
+
+# OpenSSL 3.x defaults use AES-256-CBC + PBKDF2 for PKCS#12, which Apple
+# `security import` (older PKCS#12 reader) fails to parse with "MAC
+# verification failed". Fall back to legacy 3DES + SHA-1 PBE so macOS
+# can read the bundle.
 openssl pkcs12 -export \
     -out "$TMPDIR/cert.p12" \
     -inkey "$TMPDIR/key.pem" \
     -in "$TMPDIR/cert.pem" \
     -name "$CERT_NAME" \
-    -passout pass:"" >/dev/null 2>&1
+    -passout pass:"$P12_PASS" \
+    -keypbe PBE-SHA1-3DES \
+    -certpbe PBE-SHA1-3DES \
+    -macalg sha1 \
+    -legacy >/dev/null 2>&1 \
+ || openssl pkcs12 -export \
+    -out "$TMPDIR/cert.p12" \
+    -inkey "$TMPDIR/key.pem" \
+    -in "$TMPDIR/cert.pem" \
+    -name "$CERT_NAME" \
+    -passout pass:"$P12_PASS" \
+    -keypbe PBE-SHA1-3DES \
+    -certpbe PBE-SHA1-3DES \
+    -macalg sha1 >/dev/null 2>&1
 
 security import "$TMPDIR/cert.p12" \
     -k "$KEYCHAIN" \
-    -P "" \
+    -P "$P12_PASS" \
     -T /usr/bin/codesign \
     >/dev/null
 
@@ -91,6 +113,24 @@ if security set-key-partition-list \
 else
     echo "  partition list step skipped (may prompt on first sign — choose Always Allow)"
 fi
+
+# Warp's bundle script filters with `find-identity -p codesigning -v`, where
+# `-v` requires a trusted root. Self-signed certs don't satisfy that by
+# default, so add the cert as a trusted code-signing root in the System
+# keychain. This is the step that needs sudo (admin password prompt below);
+# without it the bundle script can't see our identity and falls back to
+# ad-hoc signing again.
+echo
+echo "Adding cert as trusted code-signing root in System keychain (admin password required)..."
+sudo security add-trusted-cert \
+    -d \
+    -r trustRoot \
+    -p codeSign \
+    -k /Library/Keychains/System.keychain \
+    "$TMPDIR/cert.pem" \
+    >/dev/null 2>&1 \
+ && echo "  trust added" \
+ || echo "  trust step skipped or failed; you may need to run with sudo -S manually"
 
 echo
 echo "✓ Imported '$CERT_NAME' into login keychain."
