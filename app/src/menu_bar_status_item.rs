@@ -5,11 +5,10 @@
 //! entries. Toggling the setting installs or removes the item live without an
 //! app restart.
 //!
-//! V4 spec: see [TASKS.md `T35`](file:///Users/linhancheng/Desktop/projects/warp-fork/specs/sidebar-folder-workspaces/TASKS.md).
-//! T35 wires lifecycle only; menu-item callbacks log placeholders that T36
-//! will replace with real Show/Quit dispatch via the winit event loop proxy.
+//! V4 spec: see [TASKS.md V4](file:///Users/linhancheng/Desktop/projects/warp-fork/specs/sidebar-folder-workspaces/TASKS.md).
 
 use warpui::platform::mac::status_item::StatusItem;
+use warpui::platform::TerminationMode;
 use warpui::{AppContext, Entity, ModelContext, SingletonEntity};
 
 use crate::window_settings::{WindowSettings, WindowSettingsChangedEvent};
@@ -49,16 +48,8 @@ fn refresh(ctx: &mut AppContext) {
             (true, false) => {
                 me.item = Some(StatusItem::install(
                     None,
-                    Box::new(|| {
-                        log::info!(
-                            "[menu-bar-status-item] Show Warp clicked (T36 will dispatch reopen)"
-                        );
-                    }),
-                    Box::new(|| {
-                        log::info!(
-                            "[menu-bar-status-item] Quit Warp clicked (T36 will dispatch quit)"
-                        );
-                    }),
+                    Box::new(show_warp_action),
+                    Box::new(quit_warp_action),
                 ));
             }
             (false, true) => {
@@ -67,4 +58,21 @@ fn refresh(ctx: &mut AppContext) {
             _ => {}
         }
     });
+}
+
+/// Reopen wrap when the user picks "Show Warp" from the status-item menu.
+/// Mirrors the Dock-click reopen path
+/// ([`crate::lib::on_new_window_requested`]): always dispatches the
+/// `root_view:open_new` global action which handles both the "no window —
+/// create one" and "windows hidden — re-show" cases.
+fn show_warp_action(ctx: &mut AppContext) {
+    crate::App::record_last_active_timestamp();
+    ctx.dispatch_global_action("root_view:open_new", &());
+    ctx.dispatch_global_action("workspace:save_app", &());
+}
+
+/// Real quit. Goes through `terminate_app(Cancellable)` so any unsaved-state
+/// confirmation prompts run, matching `Cmd-Q` and the Dock-menu Quit item.
+fn quit_warp_action(ctx: &mut AppContext) {
+    ctx.terminate_app(TerminationMode::Cancellable, None);
 }
