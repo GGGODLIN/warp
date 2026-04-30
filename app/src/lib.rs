@@ -6,6 +6,8 @@ mod alloc;
 mod antivirus;
 #[cfg(target_os = "macos")]
 mod app_menus;
+#[cfg(target_os = "macos")]
+mod menu_bar_status_item;
 mod app_services;
 mod app_state;
 mod auth;
@@ -2281,6 +2283,9 @@ fn launch(ctx: &mut warpui::AppContext, app_state: Option<AppState>, launch_mode
                 });
                 maybe_register_app_as_login_item(ctx);
             }
+
+            #[cfg(target_os = "macos")]
+            menu_bar_status_item::init(ctx);
         }
         #[cfg_attr(target_family = "wasm", allow(unused_variables))]
         LaunchMode::CommandLine {
