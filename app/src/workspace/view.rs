@@ -896,6 +896,7 @@ pub struct Workspace {
     traffic_light_mouse_states: TrafficLightMouseStates,
     tab_rename_editor: ViewHandle<EditorView>,
     pane_rename_editor: ViewHandle<EditorView>,
+    folder_workspace_rename_editor: ViewHandle<EditorView>,
     vertical_tabs_search_input: ViewHandle<EditorView>,
     tips_completed: ModelHandle<TipsCompleted>,
     user_default_shell_unsupported_banner_model_handle: ModelHandle<BannerState>,
@@ -1261,6 +1262,21 @@ impl Workspace {
         editor
     }
 
+    fn folder_workspace_rename_editor(ctx: &mut ViewContext<Self>) -> ViewHandle<EditorView> {
+        let editor = ctx.add_typed_action_view(|ctx| {
+            let appearance = Appearance::as_ref(ctx);
+            let options = SingleLineEditorOptions {
+                text: TextOptions::ui_text(Some(14.), appearance),
+                ..Default::default()
+            };
+            EditorView::single_line(options, ctx)
+        });
+        ctx.subscribe_to_view(&editor, move |me, _, event, ctx| {
+            me.handle_folder_workspace_rename_editor_event(event, ctx);
+        });
+        editor
+    }
+
     pub fn handle_tab_rename_editor_event(
         &mut self,
         event: &EditorEvent,
@@ -1291,6 +1307,24 @@ impl Workspace {
                 }
                 EditorEvent::Escape => {
                     self.cancel_pane_rename(ctx);
+                }
+                _ => {}
+            }
+        }
+    }
+
+    pub fn handle_folder_workspace_rename_editor_event(
+        &mut self,
+        event: &EditorEvent,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        if self.current_workspace_state.is_folder_workspace_being_renamed() {
+            match event {
+                EditorEvent::Blurred | EditorEvent::Enter => {
+                    self.finish_folder_workspace_rename(ctx);
+                }
+                EditorEvent::Escape => {
+                    self.cancel_folder_workspace_rename(ctx);
                 }
                 _ => {}
             }
@@ -1349,6 +1383,68 @@ impl Workspace {
             self.focus_pane(locator, ctx);
             ctx.notify();
         }
+    }
+
+    fn finish_folder_workspace_rename(&mut self, ctx: &mut ViewContext<Self>) {
+        let Some(id) = self
+            .current_workspace_state
+            .folder_workspace_being_renamed()
+        else {
+            return;
+        };
+        self.current_workspace_state
+            .clear_folder_workspace_being_renamed();
+        let new_name = self
+            .folder_workspace_rename_editor
+            .as_ref(ctx)
+            .buffer_text(ctx);
+        self.folder_workspace_rename_editor
+            .update(ctx, |editor, ctx| {
+                editor.clear_buffer_and_reset_undo_stack(ctx);
+            });
+        let trimmed = new_name.trim().to_string();
+        if !trimmed.is_empty() {
+            crate::folder_workspace::FolderWorkspaceModel::handle(ctx).update(
+                ctx,
+                move |model, model_ctx| {
+                    if let Err(err) = model.rename_workspace(id, &trimmed, model_ctx) {
+                        log::warn!("Failed to rename folder workspace: {err}");
+                    }
+                },
+            );
+        }
+        ctx.notify();
+    }
+
+    fn cancel_folder_workspace_rename(&mut self, ctx: &mut ViewContext<Self>) {
+        if self.current_workspace_state.is_folder_workspace_being_renamed() {
+            self.current_workspace_state
+                .clear_folder_workspace_being_renamed();
+            self.folder_workspace_rename_editor
+                .update(ctx, |editor, ctx| {
+                    editor.clear_buffer_and_reset_undo_stack(ctx);
+                });
+            ctx.notify();
+        }
+    }
+
+    fn rename_folder_workspace(&mut self, id: i32, ctx: &mut ViewContext<Self>) {
+        let current_name = crate::folder_workspace::FolderWorkspaceModel::handle(ctx)
+            .as_ref(ctx)
+            .all()
+            .iter()
+            .find(|w| w.id == id)
+            .map(|w| w.name.clone())
+            .unwrap_or_default();
+        self.current_workspace_state
+            .set_folder_workspace_being_renamed(id);
+        self.folder_workspace_rename_editor
+            .update(ctx, move |editor, ctx| {
+                editor.clear_buffer_and_reset_undo_stack(ctx);
+                editor.insert_selected_text(&current_name, ctx);
+            });
+        ctx.focus(&self.folder_workspace_rename_editor);
+        ctx.notify();
     }
 
     fn build_import_modal(ctx: &mut ViewContext<Self>) -> ViewHandle<ImportModal> {
@@ -3034,6 +3130,7 @@ impl Workspace {
             traffic_light_mouse_states: Default::default(),
             tab_rename_editor: Self::tab_rename_editor(ctx),
             pane_rename_editor: Self::pane_rename_editor(ctx),
+            folder_workspace_rename_editor: Self::folder_workspace_rename_editor(ctx),
             vertical_tabs_search_input: Self::vertical_tabs_search_input(ctx),
             tips_completed,
             user_default_shell_unsupported_banner_model_handle,
@@ -20441,36 +20538,7 @@ impl TypedActionView for Workspace {
             }
             RenameFolderWorkspace { id } => {
                 let id = *id;
-                let current_name = crate::folder_workspace::FolderWorkspaceModel::handle(ctx)
-                    .as_ref(ctx)
-                    .all()
-                    .iter()
-                    .find(|w| w.id == id)
-                    .map(|w| w.name.clone())
-                    .unwrap_or_default();
-                let escaped = current_name.replace('\\', "\\\\").replace('"', "\\\"");
-                let script = format!(
-                    "try\n    text returned of (display dialog \"New name:\" default answer \"{escaped}\")\non error\n    \"\"\nend try"
-                );
-                let result = std::process::Command::new("osascript")
-                    .args(["-e", &script])
-                    .output();
-                if let Ok(out) = result {
-                    let raw = String::from_utf8_lossy(&out.stdout).trim().to_string();
-                    if !raw.is_empty() && raw != current_name {
-                        crate::folder_workspace::FolderWorkspaceModel::handle(ctx).update(
-                            ctx,
-                            move |model, model_ctx| {
-                                if let Err(err) = model.rename_workspace(id, &raw, model_ctx) {
-                                    log::warn!(
-                                        "Failed to rename folder workspace: {err}"
-                                    );
-                                }
-                            },
-                        );
-                    }
-                }
-                ctx.notify();
+                self.rename_folder_workspace(id, ctx);
             }
             MoveFolderWorkspaceUp { id } => {
                 let id = *id;

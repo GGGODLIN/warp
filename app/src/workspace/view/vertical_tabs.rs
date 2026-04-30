@@ -65,7 +65,7 @@ use warp_core::ui::theme::{AnsiColorIdentifier, Fill as WarpThemeFill, WarpTheme
 use warp_core::ui::Icon as WarpIcon;
 use warpui::elements::DispatchEventResult;
 use warpui::elements::{
-    resizable_state_handle, Border, ChildAnchor, Clipped, ClippedScrollStateHandle,
+    resizable_state_handle, Border, ChildAnchor, ChildView, Clipped, ClippedScrollStateHandle,
     ClippedScrollable, ConstrainedBox, Container, CornerRadius, CrossAxisAlignment, DragAxis,
     DragBarSide, Draggable, DropShadow, DropTarget, Element, Empty, EventHandler, Expanded,
     Fill as ElementFill, Flex, Hoverable, MainAxisSize, MouseStateHandle, OffsetPositioning,
@@ -1699,22 +1699,103 @@ fn render_groups(
             ));
         }
 
+        let renaming_id = workspace
+            .current_workspace_state
+            .folder_workspace_being_renamed();
+        let folder_workspace_rename_editor = workspace.folder_workspace_rename_editor.clone();
+
         for fw in &workspaces_snapshot {
             let folder_missing = !std::path::Path::new(&fw.path).exists();
             let fw_id = fw.id;
             let tab_count = by_workspace.get(&fw.id).map(|v| v.len()).unwrap_or(0);
-            let header_inner = crate::folder_workspace::view::FolderWorkspaceHeader::new(
-                fw.name.clone(),
-            )
-            .with_path(fw.path.clone())
-            .with_tab_count(tab_count)
-            .with_collapsed(fw.collapsed)
-            .with_folder_missing(folder_missing)
-            .with_title_color(theme.main_text_color(theme.background()).into())
-            .with_path_color(theme.sub_text_color(theme.background()).into())
-            .with_style(fw_styles)
-            .build()
-            .finish();
+            let renaming_this = renaming_id == Some(fw_id);
+
+            let header_inner: Box<dyn Element> = if renaming_this {
+                let editor_el = ChildView::new(&folder_workspace_rename_editor).finish();
+                let mut col = Flex::column()
+                    .with_main_axis_size(MainAxisSize::Min)
+                    .with_cross_axis_alignment(CrossAxisAlignment::Stretch)
+                    .with_spacing(2.);
+                col.add_child(editor_el);
+                if !fw.path.is_empty() {
+                    col.add_child(
+                        Text::new(
+                            std::borrow::Cow::Owned(fw.path.clone()),
+                            appearance.ui_font_family(),
+                            11.0,
+                        )
+                        .with_color(theme.sub_text_color(theme.background()).into())
+                        .finish(),
+                    );
+                }
+                Container::new(col.finish())
+                    .with_padding(Padding::uniform(8.))
+                    .finish()
+            } else {
+                crate::folder_workspace::view::FolderWorkspaceHeader::new(fw.name.clone())
+                    .with_path(fw.path.clone())
+                    .with_tab_count(tab_count)
+                    .with_collapsed(fw.collapsed)
+                    .with_folder_missing(folder_missing)
+                    .with_title_color(theme.main_text_color(theme.background()).into())
+                    .with_path_color(theme.sub_text_color(theme.background()).into())
+                    .with_style(fw_styles)
+                    .build()
+                    .finish()
+            };
+
+            if renaming_this {
+                groups.add_child(header_inner);
+                if !fw.collapsed {
+                    if let Some(indices) = by_workspace.get(&fw.id) {
+                        for &visible_index in indices {
+                            let (tab_index, filtered_pane_ids) = &visible_tabs[visible_index];
+                            let row = render_tab_group(
+                                state,
+                                workspace,
+                                *tab_index,
+                                &workspace.tabs[*tab_index],
+                                filtered_pane_ids.as_deref(),
+                                TabGroupDragState {
+                                    is_any_pane_dragging,
+                                    insert_before_index: *tab_index,
+                                    insert_after_index: None,
+                                },
+                                app,
+                            );
+                            let indented = Container::new(row)
+                                .with_padding(Padding::uniform(0.).with_left(12.))
+                                .finish();
+                            groups.add_child(indented);
+                        }
+                    }
+                    let new_tab_path = std::path::PathBuf::from(&fw.path);
+                    let new_tab_text = Text::new(
+                        std::borrow::Cow::Borrowed("+ New Tab"),
+                        appearance.ui_font_family(),
+                        12.0,
+                    )
+                    .with_color(theme.sub_text_color(theme.background()).into())
+                    .finish();
+                    let new_tab_btn = EventHandler::new(
+                        Container::new(new_tab_text)
+                            .with_padding(Padding::uniform(6.).with_left(20.))
+                            .finish(),
+                    )
+                    .on_left_mouse_down(move |ctx, _, _| {
+                        ctx.dispatch_typed_action(
+                            WorkspaceAction::AddTabToFolderWorkspace {
+                                folder_workspace_id: fw_id,
+                                path: new_tab_path.clone(),
+                            },
+                        );
+                        DispatchEventResult::StopPropagation
+                    })
+                    .finish();
+                    groups.add_child(new_tab_btn);
+                }
+                continue;
+            }
 
             let icon_color = theme.sub_text_color(theme.background());
             let make_icon_button =

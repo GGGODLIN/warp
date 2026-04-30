@@ -129,6 +129,7 @@ pub struct WorkspaceState {
     pub is_transcript_details_panel_open: bool,
     tab_being_renamed: Option<usize>, // The index of the tab being renamed
     pane_being_renamed: Option<PaneViewLocator>,
+    folder_workspace_being_renamed: Option<i32>,
 }
 
 impl WorkspaceState {
@@ -187,6 +188,7 @@ impl WorkspaceState {
         self.is_changelog_modal_open = false;
         self.tab_being_renamed = None;
         self.pane_being_renamed = None;
+        self.folder_workspace_being_renamed = None;
         self.is_reward_modal_open = false;
         self.is_launch_config_save_modal_open = false;
         self.is_command_search_open = false;
@@ -259,6 +261,24 @@ impl WorkspaceState {
 
     pub fn pane_being_renamed(&self) -> Option<PaneViewLocator> {
         self.pane_being_renamed
+    }
+
+    pub fn is_folder_workspace_being_renamed(&self) -> bool {
+        self.folder_workspace_being_renamed.is_some()
+    }
+
+    pub fn folder_workspace_being_renamed(&self) -> Option<i32> {
+        self.folder_workspace_being_renamed
+    }
+
+    pub fn set_folder_workspace_being_renamed(&mut self, id: i32) {
+        self.folder_workspace_being_renamed = Some(id);
+        self.tab_being_renamed = None;
+        self.pane_being_renamed = None;
+    }
+
+    pub fn clear_folder_workspace_being_renamed(&mut self) {
+        self.folder_workspace_being_renamed = None;
     }
 }
 
