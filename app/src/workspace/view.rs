@@ -20515,13 +20515,26 @@ impl TypedActionView for Workspace {
             AddTabToFolderWorkspace {
                 folder_workspace_id,
                 path,
+                skip_default_command,
             } => {
                 let workspace_id = *folder_workspace_id;
+                let skip_default_command = *skip_default_command;
                 let path_missing = !path.exists();
                 let initial_directory = if !path_missing {
                     Some(path.clone())
                 } else {
                     std::env::var("HOME").ok().map(PathBuf::from)
+                };
+                let default_command = if skip_default_command {
+                    None
+                } else {
+                    crate::folder_workspace::FolderWorkspaceModel::handle(ctx)
+                        .as_ref(ctx)
+                        .all()
+                        .iter()
+                        .find(|w| w.id == workspace_id)
+                        .and_then(|w| w.default_command.clone())
+                        .filter(|s| !s.is_empty())
                 };
                 if path_missing {
                     let already = crate::folder_workspace::FolderWorkspaceModel::handle(ctx)
@@ -20546,11 +20559,32 @@ impl TypedActionView for Workspace {
                         );
                     }
                 }
-                self.add_tab_with_pane_layout(
+                let layout = if let Some(cmd) = default_command {
+                    let cwd = initial_directory
+                        .clone()
+                        .unwrap_or_else(|| PathBuf::from("."));
+                    PanesLayout::Template(
+                        crate::launch_configs::launch_config::PaneTemplateType::PaneTemplate {
+                            cwd,
+                            commands: vec![
+                                crate::launch_configs::launch_config::CommandTemplate {
+                                    exec: cmd,
+                                },
+                            ],
+                            is_focused: Some(true),
+                            pane_mode:
+                                crate::launch_configs::launch_config::PaneMode::Terminal,
+                            shell: None,
+                        },
+                    )
+                } else {
                     PanesLayout::SingleTerminal(Box::new(NewTerminalOptions {
                         initial_directory,
                         ..Default::default()
-                    })),
+                    }))
+                };
+                self.add_tab_with_pane_layout(
+                    layout,
                     Arc::new(HashMap::new()),
                     None,
                     ctx,

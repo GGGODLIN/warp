@@ -151,6 +151,9 @@ pub enum WorkspaceAction {
     AddTabToFolderWorkspace {
         folder_workspace_id: i32,
         path: PathBuf,
+        /// When true, skip the workspace's `default_command` (V3 opt-out path —
+        /// alt-modifier click or right-click "Open without default command").
+        skip_default_command: bool,
     },
     RenameFolderWorkspace {
         id: i32,

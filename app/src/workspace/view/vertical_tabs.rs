@@ -1794,6 +1794,7 @@ fn render_groups(
                             WorkspaceAction::AddTabToFolderWorkspace {
                                 folder_workspace_id: fw_id,
                                 path: new_tab_path.clone(),
+                                skip_default_command: false,
                             },
                         );
                         DispatchEventResult::StopPropagation
@@ -1979,6 +1980,7 @@ fn render_groups(
                         WorkspaceAction::AddTabToFolderWorkspace {
                             folder_workspace_id: fw_id,
                             path: new_tab_path.clone(),
+                            skip_default_command: false,
                         },
                     );
                     DispatchEventResult::StopPropagation
