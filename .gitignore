@@ -57,3 +57,4 @@ desired_behavior.md
 __pycache__/
 
 .claude/scheduled_tasks.lock
+dist/
