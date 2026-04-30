@@ -279,4 +279,84 @@ mod tests {
 
         assert_eq!(get_all(&mut conn).unwrap().len(), 1);
     }
+
+    #[test]
+    fn lifecycle_create_rename_reorder_delete() {
+        let mut conn = setup_conn();
+        let a = create(&mut conn, "a", Path::new("/tmp/a")).unwrap();
+        let b = create(&mut conn, "b", Path::new("/tmp/b")).unwrap();
+        let c = create(&mut conn, "c", Path::new("/tmp/c")).unwrap();
+
+        rename(&mut conn, a.id, "alpha").unwrap();
+        assert_eq!(get_by_id(&mut conn, a.id).unwrap().name, "alpha");
+
+        let b_order = b.display_order;
+        let c_order = c.display_order;
+        set_display_order(&mut conn, b.id, c_order).unwrap();
+        set_display_order(&mut conn, c.id, b_order).unwrap();
+        let all = get_all(&mut conn).unwrap();
+        assert_eq!(all[0].name, "alpha");
+        assert_eq!(all[1].name, "c");
+        assert_eq!(all[2].name, "b");
+
+        delete_with_tab_reassignment(&mut conn, a.id, Some(b.id)).unwrap();
+        let after = get_all(&mut conn).unwrap();
+        assert_eq!(after.len(), 2);
+        assert!(get_by_id(&mut conn, a.id).is_err());
+    }
+
+    #[test]
+    fn delete_reassigns_tabs_to_fallback() {
+        let mut conn = setup_conn();
+        insert_test_tabs(&mut conn, 3);
+        let a = create(&mut conn, "a", Path::new("/tmp/a")).unwrap();
+        let b = create(&mut conn, "b", Path::new("/tmp/b")).unwrap();
+
+        diesel::update(tabs::table)
+            .set(tabs::folder_workspace_id.eq(a.id))
+            .execute(&mut conn)
+            .unwrap();
+
+        delete_with_tab_reassignment(&mut conn, a.id, Some(b.id)).unwrap();
+
+        let assigned: i64 = tabs::table
+            .filter(tabs::folder_workspace_id.eq(b.id))
+            .count()
+            .get_result(&mut conn)
+            .unwrap();
+        assert_eq!(assigned, 3);
+        assert!(get_by_id(&mut conn, a.id).is_err());
+    }
+
+    #[test]
+    fn delete_with_no_fallback_nulls_tab_ids() {
+        let mut conn = setup_conn();
+        insert_test_tabs(&mut conn, 2);
+        let a = create(&mut conn, "solo", Path::new("/tmp/solo")).unwrap();
+
+        diesel::update(tabs::table)
+            .set(tabs::folder_workspace_id.eq(a.id))
+            .execute(&mut conn)
+            .unwrap();
+
+        delete_with_tab_reassignment(&mut conn, a.id, None).unwrap();
+
+        let nulled: i64 = tabs::table
+            .filter(tabs::folder_workspace_id.is_null())
+            .count()
+            .get_result(&mut conn)
+            .unwrap();
+        assert_eq!(nulled, 2);
+    }
+
+    #[test]
+    fn create_with_id_honors_caller_supplied_id() {
+        let mut conn = setup_conn();
+        create_with_id_and_attrs(&mut conn, 42, "forty-two", "/tmp/42", 5, true).unwrap();
+        let row = get_by_id(&mut conn, 42).unwrap();
+        assert_eq!(row.name, "forty-two");
+        assert_eq!(row.path, "/tmp/42");
+        assert_eq!(row.display_order, 5);
+        assert!(row.collapsed);
+    }
 }

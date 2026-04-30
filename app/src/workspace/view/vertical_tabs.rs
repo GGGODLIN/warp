@@ -1979,11 +1979,11 @@ fn render_groups(
             }
         }
 
-        // "+ Add Folder Workspace" button — keep at bottom under all groups.
-        // Uses osascript "choose folder" subprocess instead of in-process
-        // native_dialog::FileDialog. native_dialog opens NSOpenPanel as a
-        // modal that pumps Cocoa's run loop, which fires pending async tasks
-        // while my outer borrow_mut(AppContext) is still active → panic.
+        // "+ Add Folder Workspace" — dispatches OpenFolderWorkspacePicker
+        // which routes through Workspace -> ctx.open_file_picker (Warp's
+        // event_loop_proxy thread + native_dialog), avoiding the
+        // RefCell borrow panic that occurs when NSOpenPanel pumps the
+        // main run loop inside a click handler's outer borrow.
         let add_btn_text = Text::new(
             std::borrow::Cow::Borrowed("+ Add Folder Workspace"),
             appearance.ui_font_family(),
@@ -1997,29 +1997,7 @@ fn render_groups(
                 .finish(),
         )
         .on_left_mouse_down(|ctx, _, _| {
-            let script = r#"try
-    POSIX path of (choose folder with prompt "Choose folder workspace")
-on error
-    ""
-end try"#;
-            let result = std::process::Command::new("osascript")
-                .args(["-e", script])
-                .output();
-            if let Ok(out) = result {
-                let raw = String::from_utf8_lossy(&out.stdout).trim().to_string();
-                if !raw.is_empty() {
-                    let trimmed = raw.trim_end_matches('/');
-                    let path = std::path::PathBuf::from(trimmed);
-                    let name = path
-                        .file_name()
-                        .map(|s| s.to_string_lossy().to_string())
-                        .unwrap_or_else(|| "Workspace".to_string());
-                    ctx.dispatch_typed_action(WorkspaceAction::AddFolderWorkspace {
-                        name,
-                        path,
-                    });
-                }
-            }
+            ctx.dispatch_typed_action(WorkspaceAction::OpenFolderWorkspacePicker);
             DispatchEventResult::StopPropagation
         })
         .finish();

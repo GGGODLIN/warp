@@ -135,7 +135,9 @@ pub enum WorkspaceAction {
     CloseTabsRight(usize),
     CloseTabsRightActiveTab,
     AddDefaultTab,
-    /// Open a folder picker and persist the result as a new FolderWorkspace.
+    /// Open the OS-native folder picker; result feeds AddFolderWorkspace.
+    OpenFolderWorkspacePicker,
+    /// Persist a folder picker result as a new FolderWorkspace.
     AddFolderWorkspace {
         name: String,
         path: PathBuf,
@@ -765,6 +767,7 @@ impl WorkspaceAction {
             | CloseTabsRightActiveTab
             | ToggleTabColor { .. }
             | AddDefaultTab
+            | OpenFolderWorkspacePicker
             | AddFolderWorkspace { .. }
             | ToggleFolderWorkspaceCollapsed { .. }
             | AddTabToFolderWorkspace { .. }

@@ -20455,6 +20455,24 @@ impl TypedActionView for Workspace {
                     ctx.notify();
                 }
             }
+            OpenFolderWorkspacePicker => {
+                ctx.open_file_picker(
+                    |result, ctx| {
+                        let path = match result {
+                            Ok(paths) if !paths.is_empty() => PathBuf::from(&paths[0]),
+                            _ => return,
+                        };
+                        let name = path
+                            .file_name()
+                            .map(|s| s.to_string_lossy().to_string())
+                            .unwrap_or_else(|| "Workspace".to_string());
+                        ctx.dispatch_typed_action(
+                            &WorkspaceAction::AddFolderWorkspace { name, path },
+                        );
+                    },
+                    warpui::platform::FilePickerConfiguration::new().folders_only(),
+                );
+            }
             AddFolderWorkspace { name, path } => {
                 let name = name.clone();
                 let path = path.clone();
