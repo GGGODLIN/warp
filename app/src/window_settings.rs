@@ -81,7 +81,7 @@ define_settings_group!(WindowSettings, settings: [
     },
     close_to_menu_bar: CloseToMenuBar {
         type: bool,
-        default: false,
+        default: true,
         supported_platforms: SupportedPlatforms::MAC,
         sync_to_cloud: SyncToCloud::Globally(RespectUserSyncSetting::Yes),
         private: false,
