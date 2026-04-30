@@ -1707,13 +1707,20 @@ fn render_groups(
         let renaming_id = workspace
             .current_workspace_state
             .folder_workspace_being_renamed();
+        let editing_default_command_id = workspace
+            .current_workspace_state
+            .folder_workspace_default_command_being_edited();
         let folder_workspace_rename_editor = workspace.folder_workspace_rename_editor.clone();
+        let folder_workspace_default_command_editor = workspace
+            .folder_workspace_default_command_editor
+            .clone();
 
         for fw in &workspaces_snapshot {
             let folder_missing = !std::path::Path::new(&fw.path).exists();
             let fw_id = fw.id;
             let tab_count = by_workspace.get(&fw.id).map(|v| v.len()).unwrap_or(0);
             let renaming_this = renaming_id == Some(fw_id);
+            let editing_default_command_this = editing_default_command_id == Some(fw_id);
 
             let header_inner: Box<dyn Element> = if renaming_this {
                 let editor_el = ChildView::new(&folder_workspace_rename_editor).finish();
@@ -1736,6 +1743,25 @@ fn render_groups(
                 Container::new(col.finish())
                     .with_padding(Padding::uniform(8.))
                     .finish()
+            } else if editing_default_command_this {
+                let title_text = Text::new(
+                    std::borrow::Cow::Owned(fw.name.clone()),
+                    appearance.ui_font_family(),
+                    14.0,
+                )
+                .with_color(theme.main_text_color(theme.background()).into())
+                .finish();
+                let editor_el =
+                    ChildView::new(&folder_workspace_default_command_editor).finish();
+                let mut col = Flex::column()
+                    .with_main_axis_size(MainAxisSize::Min)
+                    .with_cross_axis_alignment(CrossAxisAlignment::Stretch)
+                    .with_spacing(2.);
+                col.add_child(title_text);
+                col.add_child(editor_el);
+                Container::new(col.finish())
+                    .with_padding(Padding::uniform(8.))
+                    .finish()
             } else {
                 crate::folder_workspace::view::FolderWorkspaceHeader::new(fw.name.clone())
                     .with_path(fw.path.clone())
@@ -1751,7 +1777,7 @@ fn render_groups(
                     .finish()
             };
 
-            if renaming_this {
+            if renaming_this || editing_default_command_this {
                 groups.add_child(header_inner);
                 if !fw.collapsed {
                     if let Some(indices) = by_workspace.get(&fw.id) {
@@ -1881,7 +1907,7 @@ fn render_groups(
                     DispatchEventResult::StopPropagation
                 })
                 .on_right_mouse_down(move |ctx, _, _| {
-                    let script = "try\n    set choice to choose from list {\"Rename\", \"Move Up\", \"Move Down\", \"Delete\"} with prompt \"Folder workspace\"\n    if choice is false then\n        \"\"\n    else\n        item 1 of choice\n    end if\non error\n    \"\"\nend try";
+                    let script = "try\n    set choice to choose from list {\"Rename\", \"Set default command...\", \"Move Up\", \"Move Down\", \"Delete\"} with prompt \"Folder workspace\"\n    if choice is false then\n        \"\"\n    else\n        item 1 of choice\n    end if\non error\n    \"\"\nend try";
                     let out = std::process::Command::new("osascript")
                         .args(["-e", script])
                         .output();
@@ -1891,6 +1917,11 @@ fn render_groups(
                             "Rename" => Some(WorkspaceAction::RenameFolderWorkspace {
                                 id: fw_id,
                             }),
+                            "Set default command..." => Some(
+                                WorkspaceAction::EditFolderWorkspaceDefaultCommand {
+                                    id: fw_id,
+                                },
+                            ),
                             "Move Up" => Some(WorkspaceAction::MoveFolderWorkspaceUp {
                                 id: fw_id,
                             }),

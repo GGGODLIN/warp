@@ -897,6 +897,7 @@ pub struct Workspace {
     tab_rename_editor: ViewHandle<EditorView>,
     pane_rename_editor: ViewHandle<EditorView>,
     folder_workspace_rename_editor: ViewHandle<EditorView>,
+    folder_workspace_default_command_editor: ViewHandle<EditorView>,
     folder_workspace_drag_baseline: Option<(i32, f32)>,
     vertical_tabs_search_input: ViewHandle<EditorView>,
     tips_completed: ModelHandle<TipsCompleted>,
@@ -1278,6 +1279,23 @@ impl Workspace {
         editor
     }
 
+    fn folder_workspace_default_command_editor(
+        ctx: &mut ViewContext<Self>,
+    ) -> ViewHandle<EditorView> {
+        let editor = ctx.add_typed_action_view(|ctx| {
+            let appearance = Appearance::as_ref(ctx);
+            let options = SingleLineEditorOptions {
+                text: TextOptions::ui_text(Some(11.), appearance),
+                ..Default::default()
+            };
+            EditorView::single_line(options, ctx)
+        });
+        ctx.subscribe_to_view(&editor, move |me, _, event, ctx| {
+            me.handle_folder_workspace_default_command_editor_event(event, ctx);
+        });
+        editor
+    }
+
     pub fn handle_tab_rename_editor_event(
         &mut self,
         event: &EditorEvent,
@@ -1326,6 +1344,27 @@ impl Workspace {
                 }
                 EditorEvent::Escape => {
                     self.cancel_folder_workspace_rename(ctx);
+                }
+                _ => {}
+            }
+        }
+    }
+
+    pub fn handle_folder_workspace_default_command_editor_event(
+        &mut self,
+        event: &EditorEvent,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        if self
+            .current_workspace_state
+            .is_folder_workspace_default_command_being_edited()
+        {
+            match event {
+                EditorEvent::Blurred | EditorEvent::Enter => {
+                    self.finish_folder_workspace_default_command_edit(ctx);
+                }
+                EditorEvent::Escape => {
+                    self.cancel_folder_workspace_default_command_edit(ctx);
                 }
                 _ => {}
             }
@@ -1446,6 +1485,70 @@ impl Workspace {
             });
         ctx.focus(&self.folder_workspace_rename_editor);
         ctx.notify();
+    }
+
+    fn edit_folder_workspace_default_command(&mut self, id: i32, ctx: &mut ViewContext<Self>) {
+        let current = crate::folder_workspace::FolderWorkspaceModel::handle(ctx)
+            .as_ref(ctx)
+            .all()
+            .iter()
+            .find(|w| w.id == id)
+            .and_then(|w| w.default_command.clone())
+            .unwrap_or_default();
+        self.current_workspace_state
+            .set_folder_workspace_default_command_being_edited(id);
+        self.folder_workspace_default_command_editor
+            .update(ctx, move |editor, ctx| {
+                editor.clear_buffer_and_reset_undo_stack(ctx);
+                editor.insert_selected_text(&current, ctx);
+            });
+        ctx.focus(&self.folder_workspace_default_command_editor);
+        ctx.notify();
+    }
+
+    fn finish_folder_workspace_default_command_edit(&mut self, ctx: &mut ViewContext<Self>) {
+        let Some(id) = self
+            .current_workspace_state
+            .folder_workspace_default_command_being_edited()
+        else {
+            return;
+        };
+        self.current_workspace_state
+            .clear_folder_workspace_default_command_being_edited();
+        let new_value = self
+            .folder_workspace_default_command_editor
+            .as_ref(ctx)
+            .buffer_text(ctx);
+        self.folder_workspace_default_command_editor
+            .update(ctx, |editor, ctx| {
+                editor.clear_buffer_and_reset_undo_stack(ctx);
+            });
+        let trimmed = new_value.trim().to_string();
+        let normalized = if trimmed.is_empty() { None } else { Some(trimmed) };
+        crate::folder_workspace::FolderWorkspaceModel::handle(ctx).update(
+            ctx,
+            move |model, model_ctx| {
+                if let Err(err) = model.set_default_command(id, normalized, model_ctx) {
+                    log::warn!("Failed to set folder workspace default command: {err}");
+                }
+            },
+        );
+        ctx.notify();
+    }
+
+    fn cancel_folder_workspace_default_command_edit(&mut self, ctx: &mut ViewContext<Self>) {
+        if self
+            .current_workspace_state
+            .is_folder_workspace_default_command_being_edited()
+        {
+            self.current_workspace_state
+                .clear_folder_workspace_default_command_being_edited();
+            self.folder_workspace_default_command_editor
+                .update(ctx, |editor, ctx| {
+                    editor.clear_buffer_and_reset_undo_stack(ctx);
+                });
+            ctx.notify();
+        }
     }
 
     fn build_import_modal(ctx: &mut ViewContext<Self>) -> ViewHandle<ImportModal> {
@@ -3132,6 +3235,9 @@ impl Workspace {
             tab_rename_editor: Self::tab_rename_editor(ctx),
             pane_rename_editor: Self::pane_rename_editor(ctx),
             folder_workspace_rename_editor: Self::folder_workspace_rename_editor(ctx),
+            folder_workspace_default_command_editor: Self::folder_workspace_default_command_editor(
+                ctx,
+            ),
             folder_workspace_drag_baseline: None,
             vertical_tabs_search_input: Self::vertical_tabs_search_input(ctx),
             tips_completed,
@@ -20604,6 +20710,10 @@ impl TypedActionView for Workspace {
             RenameFolderWorkspace { id } => {
                 let id = *id;
                 self.rename_folder_workspace(id, ctx);
+            }
+            EditFolderWorkspaceDefaultCommand { id } => {
+                let id = *id;
+                self.edit_folder_workspace_default_command(id, ctx);
             }
             MoveFolderWorkspaceUp { id } => {
                 let id = *id;

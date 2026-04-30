@@ -158,6 +158,11 @@ pub enum WorkspaceAction {
     RenameFolderWorkspace {
         id: i32,
     },
+    /// Enter inline-editor mode to set the per-workspace default command
+    /// (V3 — auto-run command in new tabs of this workspace).
+    EditFolderWorkspaceDefaultCommand {
+        id: i32,
+    },
     MoveFolderWorkspaceUp {
         id: i32,
     },
@@ -775,6 +780,7 @@ impl WorkspaceAction {
             | ToggleFolderWorkspaceCollapsed { .. }
             | AddTabToFolderWorkspace { .. }
             | RenameFolderWorkspace { .. }
+            | EditFolderWorkspaceDefaultCommand { .. }
             | MoveFolderWorkspaceUp { .. }
             | MoveFolderWorkspaceDown { .. }
             | DeleteFolderWorkspace { .. }
