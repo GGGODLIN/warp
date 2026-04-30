@@ -43,6 +43,7 @@ pub fn create(
     conn: &mut SqliteConnection,
     name: &str,
     path: &Path,
+    default_command: Option<String>,
 ) -> QueryResult<FolderWorkspace> {
     let next_order: i32 = folder_workspaces::table
         .select(diesel::dsl::max(folder_workspaces::display_order))
@@ -55,6 +56,7 @@ pub fn create(
         path: path.to_string_lossy().into_owned(),
         display_order: next_order,
         collapsed: false,
+        default_command,
     };
 
     diesel::insert_into(folder_workspaces::table)
@@ -145,7 +147,7 @@ pub fn bootstrap_default_workspace_for_existing_tabs(
     }
 
     let home = std::env::var("HOME").unwrap_or_else(|_| "/".to_string());
-    let workspace = create(conn, "Default", Path::new(&home))?;
+    let workspace = create(conn, "Default", Path::new(&home), None)?;
 
     diesel::update(tabs::table)
         .set(tabs::folder_workspace_id.eq(workspace.id))
@@ -181,7 +183,7 @@ mod tests {
     #[test]
     fn create_and_get_by_id() {
         let mut conn = setup_conn();
-        let fw = create(&mut conn, "test", Path::new("/tmp/test")).unwrap();
+        let fw = create(&mut conn, "test", Path::new("/tmp/test"), None).unwrap();
         assert_eq!(fw.name, "test");
         assert_eq!(fw.path, "/tmp/test");
         assert_eq!(fw.display_order, 0);
@@ -195,9 +197,9 @@ mod tests {
     #[test]
     fn create_assigns_incrementing_display_order() {
         let mut conn = setup_conn();
-        let a = create(&mut conn, "a", Path::new("/tmp/a")).unwrap();
-        let b = create(&mut conn, "b", Path::new("/tmp/b")).unwrap();
-        let c = create(&mut conn, "c", Path::new("/tmp/c")).unwrap();
+        let a = create(&mut conn, "a", Path::new("/tmp/a"), None).unwrap();
+        let b = create(&mut conn, "b", Path::new("/tmp/b"), None).unwrap();
+        let c = create(&mut conn, "c", Path::new("/tmp/c"), None).unwrap();
         assert_eq!(a.display_order, 0);
         assert_eq!(b.display_order, 1);
         assert_eq!(c.display_order, 2);
@@ -206,9 +208,9 @@ mod tests {
     #[test]
     fn get_all_returns_in_display_order() {
         let mut conn = setup_conn();
-        create(&mut conn, "a", Path::new("/tmp/a")).unwrap();
-        create(&mut conn, "b", Path::new("/tmp/b")).unwrap();
-        create(&mut conn, "c", Path::new("/tmp/c")).unwrap();
+        create(&mut conn, "a", Path::new("/tmp/a"), None).unwrap();
+        create(&mut conn, "b", Path::new("/tmp/b"), None).unwrap();
+        create(&mut conn, "c", Path::new("/tmp/c"), None).unwrap();
 
         let all = get_all(&mut conn).unwrap();
         assert_eq!(all.len(), 3);
@@ -220,7 +222,7 @@ mod tests {
     #[test]
     fn delete_removes_row() {
         let mut conn = setup_conn();
-        let fw = create(&mut conn, "doomed", Path::new("/tmp/doomed")).unwrap();
+        let fw = create(&mut conn, "doomed", Path::new("/tmp/doomed"), None).unwrap();
         let n = delete(&mut conn, fw.id).unwrap();
         assert_eq!(n, 1);
         assert!(get_by_id(&mut conn, fw.id).is_err());
@@ -229,7 +231,7 @@ mod tests {
     #[test]
     fn update_collapsed_toggles() {
         let mut conn = setup_conn();
-        let fw = create(&mut conn, "x", Path::new("/tmp/x")).unwrap();
+        let fw = create(&mut conn, "x", Path::new("/tmp/x"), None).unwrap();
         assert!(!fw.collapsed);
 
         update_collapsed(&mut conn, fw.id, true).unwrap();
@@ -283,9 +285,9 @@ mod tests {
     #[test]
     fn lifecycle_create_rename_reorder_delete() {
         let mut conn = setup_conn();
-        let a = create(&mut conn, "a", Path::new("/tmp/a")).unwrap();
-        let b = create(&mut conn, "b", Path::new("/tmp/b")).unwrap();
-        let c = create(&mut conn, "c", Path::new("/tmp/c")).unwrap();
+        let a = create(&mut conn, "a", Path::new("/tmp/a"), None).unwrap();
+        let b = create(&mut conn, "b", Path::new("/tmp/b"), None).unwrap();
+        let c = create(&mut conn, "c", Path::new("/tmp/c"), None).unwrap();
 
         rename(&mut conn, a.id, "alpha").unwrap();
         assert_eq!(get_by_id(&mut conn, a.id).unwrap().name, "alpha");
@@ -309,8 +311,8 @@ mod tests {
     fn delete_reassigns_tabs_to_fallback() {
         let mut conn = setup_conn();
         insert_test_tabs(&mut conn, 3);
-        let a = create(&mut conn, "a", Path::new("/tmp/a")).unwrap();
-        let b = create(&mut conn, "b", Path::new("/tmp/b")).unwrap();
+        let a = create(&mut conn, "a", Path::new("/tmp/a"), None).unwrap();
+        let b = create(&mut conn, "b", Path::new("/tmp/b"), None).unwrap();
 
         diesel::update(tabs::table)
             .set(tabs::folder_workspace_id.eq(a.id))
@@ -332,7 +334,7 @@ mod tests {
     fn delete_with_no_fallback_nulls_tab_ids() {
         let mut conn = setup_conn();
         insert_test_tabs(&mut conn, 2);
-        let a = create(&mut conn, "solo", Path::new("/tmp/solo")).unwrap();
+        let a = create(&mut conn, "solo", Path::new("/tmp/solo"), None).unwrap();
 
         diesel::update(tabs::table)
             .set(tabs::folder_workspace_id.eq(a.id))

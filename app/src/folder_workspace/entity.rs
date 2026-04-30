@@ -129,6 +129,7 @@ impl FolderWorkspaceModel {
             display_order,
             collapsed: false,
             created_ts: Utc::now().naive_utc(),
+            default_command: None,
         };
         self.workspaces.push(workspace);
         self.last_active_id = Some(id);

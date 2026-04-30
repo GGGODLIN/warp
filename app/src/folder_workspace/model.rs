@@ -18,6 +18,7 @@ pub struct FolderWorkspace {
     pub display_order: i32,
     pub collapsed: bool,
     pub created_ts: NaiveDateTime,
+    pub default_command: Option<String>,
 }
 
 /// A new folder workspace ready to insert. `id` is autoincrement and
@@ -29,6 +30,7 @@ pub struct NewFolderWorkspace {
     pub path: String,
     pub display_order: i32,
     pub collapsed: bool,
+    pub default_command: Option<String>,
 }
 
 #[cfg(test)]
@@ -47,6 +49,7 @@ mod tests {
             path: "/tmp/test".to_string(),
             display_order: 0,
             collapsed: false,
+            default_command: None,
         };
 
         let inserted = diesel::insert_into(folder_workspaces::table)
@@ -65,5 +68,55 @@ mod tests {
         assert_eq!(all[0].display_order, 0);
         assert!(!all[0].collapsed);
         assert!(all[0].id > 0);
+        assert_eq!(all[0].default_command, None);
+    }
+
+    #[test]
+    fn default_command_round_trip() {
+        let mut conn = SqliteConnection::establish(":memory:").unwrap();
+        conn.run_pending_migrations(persistence::MIGRATIONS).unwrap();
+
+        let with_cmd = NewFolderWorkspace {
+            name: "with-cmd".to_string(),
+            path: "/tmp/a".to_string(),
+            display_order: 0,
+            collapsed: false,
+            default_command: Some("claude".to_string()),
+        };
+        let with_empty = NewFolderWorkspace {
+            name: "with-empty".to_string(),
+            path: "/tmp/b".to_string(),
+            display_order: 1,
+            collapsed: false,
+            default_command: Some(String::new()),
+        };
+        let without_cmd = NewFolderWorkspace {
+            name: "without".to_string(),
+            path: "/tmp/c".to_string(),
+            display_order: 2,
+            collapsed: false,
+            default_command: None,
+        };
+
+        for new in [&with_cmd, &with_empty, &without_cmd] {
+            diesel::insert_into(folder_workspaces::table)
+                .values(new)
+                .execute(&mut conn)
+                .unwrap();
+        }
+
+        let mut all: Vec<FolderWorkspace> = folder_workspaces::table
+            .select(FolderWorkspace::as_select())
+            .order(folder_workspaces::display_order.asc())
+            .load(&mut conn)
+            .unwrap();
+        assert_eq!(all.len(), 3);
+
+        let without = all.pop().unwrap();
+        let empty = all.pop().unwrap();
+        let claude = all.pop().unwrap();
+        assert_eq!(claude.default_command.as_deref(), Some("claude"));
+        assert_eq!(empty.default_command.as_deref(), Some(""));
+        assert_eq!(without.default_command, None);
     }
 }

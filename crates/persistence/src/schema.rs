@@ -179,6 +179,7 @@ diesel::table! {
         display_order -> Integer,
         collapsed -> Bool,
         created_ts -> Timestamp,
+        default_command -> Nullable<Text>,
     }
 }
 
