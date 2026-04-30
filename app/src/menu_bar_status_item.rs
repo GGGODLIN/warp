@@ -61,11 +61,17 @@ fn refresh(ctx: &mut AppContext) {
 }
 
 /// Reopen wrap when the user picks "Show Warp" from the status-item menu.
-/// Mirrors the Dock-click reopen path
-/// ([`crate::lib::on_new_window_requested`]): always dispatches the
-/// `root_view:open_new` global action which handles both the "no window —
-/// create one" and "windows hidden — re-show" cases.
+///
+/// If any windows still exist (typically hidden by the V4 close intercept),
+/// unhide and focus the first one — the existing process keeps its claude
+/// sessions, scrollback, and shell state. Only when there are no windows at
+/// all do we fall through to creating a new one (matching the Dock-click
+/// reopen path in [`crate::lib::on_new_window_requested`]).
 fn show_warp_action(ctx: &mut AppContext) {
+    if let Some(window_id) = ctx.window_ids().next() {
+        ctx.windows().show_window_and_focus_app(window_id);
+        return;
+    }
     crate::App::record_last_active_timestamp();
     ctx.dispatch_global_action("root_view:open_new", &());
     ctx.dispatch_global_action("workspace:save_app", &());

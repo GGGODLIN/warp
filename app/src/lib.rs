@@ -1926,6 +1926,25 @@ fn app_callbacks(is_integration_test: bool) -> warpui::platform::AppCallbacks {
             crash_reporting::uninit_sentry();
         })),
         on_should_close_window: Some(Box::new(move |window_id, ctx| {
+            // V4 close-to-menu-bar (macOS-only): when this is the last window
+            // and the setting is on, hide the window instead of letting it
+            // close. The wrap process keeps running and can be reopened from
+            // the menu-bar status item ("Show Warp"). This must run before
+            // the existing quit-on-last-window-closed branch, otherwise that
+            // branch would terminate the app instead.
+            #[cfg(target_os = "macos")]
+            {
+                let close_to_menu_bar =
+                    *crate::window_settings::WindowSettings::as_ref(ctx).close_to_menu_bar;
+                if close_to_menu_bar && ctx.window_ids().count() == 1 {
+                    log::info!(
+                        "close_to_menu_bar: hiding {window_id:?} instead of closing"
+                    );
+                    ctx.windows().hide_window(window_id);
+                    return ApproveTerminateResult::Cancel;
+                }
+            }
+
             let general_settings = GeneralSettings::as_ref(ctx);
             // On Linux or Windows, if we're about to close the final window, we should quit the app instead.
             // On Mac, we do this conditionally based on a user setting.
