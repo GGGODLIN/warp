@@ -442,3 +442,298 @@ skill template 要求：
 5. ✅ Hello-world patch 釘上去了（甚至超過 hello-world，做到完整 schema + render）
 
 剩餘工程量估計：v2 (T9-T14) 約 1-2 週做 write-side。Phase 1 + 1-2 週 = Path B 預估 3-4 週符合預期。
+
+---
+
+## V2 Session Outcome（2026-04-30 follow-up）
+
+回應 user 反饋「半成品 sidebar」之後，V2 session 在 `feat/folder-workspaces` 兩個 commit 內補完 cmux-like UX：
+
+### V2 已交付 — `ffaf5a0` (V1-V4 grouping)
+
+| Item | Commit | 對應 PRODUCT.md V2 |
+|---|---|---|
+| TabData / TabSnapshot / NewTab 帶 `folder_workspace_id` | ffaf5a0 | (foundation) |
+| New tab fallback first workspace（後 V9 改 last-active） | ffaf5a0 | (foundation) |
+| `vertical_tabs.rs` grouping render: header → indented children → `+ New Tab` → `+ Add Folder Workspace` | ffaf5a0 | S2/S3 部分 |
+| Click header → toggle collapse | ffaf5a0 | (foundation for S1) |
+| Per-ws `+ New Tab` button (cwd = ws.path) | ffaf5a0 | (foundation for S4) |
+
+### V2 已交付 — `4c6a7c3` (V5-V10 lifecycle + UX)
+
+| Item | Commit | 對應 PRODUCT.md V2 |
+|---|---|---|
+| Header rename / move up / down / delete (右鍵 menu + icon row) | 4c6a7c3 | S1 |
+| Header 雙行 (name 14pt + path 11pt + tab count) | 4c6a7c3 | S2 |
+| Tab UI minimal mode (砍 second_line + metadata + subtitle) | 4c6a7c3 | S3 |
+| Cmd+T fallback last-active workspace | 4c6a7c3 | S4 |
+| Tab 同 ws 內 reorder + 跨 ws 拒絕 | 4c6a7c3 | S5 |
+
+### V2 待做 — Tasks T15-T24
+
+按 [TECH.md V2 Implementation Order](file:///Users/linhancheng/Desktop/projects/warp-fork/specs/sidebar-folder-workspaces/TECH.md) 排序。
+
+---
+
+### Task 15: P5 — SVG icons 取代 unicode
+
+**Description**: header 4 個 icon button (`✎ ↑ ↓ ✕`) 改用 Warp 既有 svg icon (透過 `WarpIcon::*::to_warpui_icon(color)` 路徑)。`📁` folder icon prefix 也改 svg。
+
+**Acceptance**:
+- [ ] 4 個 icon button 都用 svg 不用 unicode
+- [ ] Folder icon prefix 用 svg
+- [ ] 視覺一致；render 不依字體
+
+**Verification**:
+- `cargo build` 過
+- 跑 app → header icon 對
+
+**Dependencies**: 無
+
+**Files**: `app/src/workspace/view/vertical_tabs.rs` + `app/src/folder_workspace/view.rs` — 2 files
+
+**Scope**: S
+
+---
+
+### Task 16: P3 — Hover 才顯示 icon row
+
+**Description**: header icon button row 預設 hidden，hover header 才出現。用 `Hoverable::new(state, |hover_state| { ... })` 控制；state 存在 `VerticalTabsPanelState.folder_workspace_header_hover_states: RefCell<HashMap<i32, MouseStateHandle>>`。Delete workspace 時要清 map entry。
+
+**Acceptance**:
+- [ ] icon row 預設 hidden（或 opacity 0 沒 layout shift）
+- [ ] Hover header → icon row 出現
+- [ ] 移開 → 隱藏
+- [ ] Delete ws 後 map 沒 stale entry
+
+**Verification**:
+- 手動：hover / unhover 切換看
+- 監看 memory map size on delete
+
+**Dependencies**: 無
+
+**Files**: `app/src/workspace/view/vertical_tabs.rs` — 1 file
+
+**Scope**: S
+
+---
+
+### Task 17: P4 — Delete confirm dialog
+
+**Description**: `DeleteFolderWorkspace { id }` 改 dispatch confirm dialog。dialog 抄 `delete_conversation_confirmation_dialog.rs` pattern。新加 `ConfirmDeleteFolderWorkspace { id }` action 走 entity.delete_workspace。`WorkspaceState` 加 `pending_folder_workspace_delete: Option<i32>`。
+
+**Acceptance**:
+- [ ] 點 ✕ icon 或右鍵 Delete → 跳 confirm
+- [ ] OK → workspace 真刪 + tabs reassign
+- [ ] Cancel → 不變
+
+**Verification**:
+- 手動：建 ws → 嘗試刪 → 看 dialog → 兩條路徑都試
+- DB check：cancel 後 row 還在；confirm 後 row 沒了
+
+**Dependencies**: 無
+
+**Files**: 新 `app/src/workspace/delete_folder_workspace_confirmation_dialog.rs` + `app/src/workspace/{action.rs, view.rs}` — 3 files
+
+**Scope**: M
+
+---
+
+### Task 18: P2 — Rename inline editor
+
+**Description**: `RenameFolderWorkspace { id }` 從 osascript dialog 改 inline editor。抄 `Workspace.tab_rename_editor` pattern。新 ViewHandle `folder_workspace_rename_editor` + `WorkspaceState` 加 `is_folder_workspace_being_renamed`。`vertical_tabs.rs` header render：rename mode 時 editor 取代 title `Text`。
+
+**Acceptance**:
+- [ ] 點 ✎ / 右鍵 Rename → editor focus 在 header
+- [ ] Enter / blur → commit + DB write
+- [ ] Escape → cancel + 退 rename mode
+- [ ] Rename 期間 click 別處 → 也 commit
+
+**Verification**:
+- 手動：rename "foo" → "bar"，restart 確認 "bar" persist
+- Cancel rename，名字不變
+
+**Dependencies**: T15（svg icons 才有 ✎ icon dispatch）
+
+**Files**: `app/src/workspace/{view.rs, action.rs, view/vertical_tabs.rs}` + `app/src/folder_workspace/entity.rs` — 4 files
+
+**Scope**: M
+
+---
+
+### Task 19: P1 — Drag workspace header reorder
+
+**Description**: header wrap `Draggable` + 加 sidebar Y-position infra。State：
+
+- `VerticalTabsPanelState.folder_workspace_drag_states: RefCell<HashMap<i32, DraggableState>>`
+- `VerticalTabsPanelState.folder_workspace_header_positions: RefCell<HashMap<i32, RectF>>` (透過 `SavePosition` capture)
+
+Actions: `StartFolderWorkspaceDrag { id }` / `DragFolderWorkspace { id, position }` / `DropFolderWorkspace`.
+
+Drop 邏輯：drag rect midpoint Y 比對 captured positions，找最近 neighbor → swap `display_order`（多次 `MoveFolderWorkspaceUp/Down` 或 batch reorder）。
+
+**Acceptance**:
+- [ ] Drag header up/down → 視覺跟手指
+- [ ] Drop → display_order 跟著新位置；DB persisted
+- [ ] Cross-rate drag with > 2 swaps work
+
+**Verification**:
+- 手動：3 個 ws，drag 第 3 個到第 1 → 順序對；restart → 持久
+- Cross-multi swap：drag 第 1 個到第 3 → 順序 [2, 3, 1]
+
+**Dependencies**: 無（tab drag pattern 已存在可借用）
+
+**Files**: `app/src/workspace/view/vertical_tabs.rs` + `app/src/workspace/{action.rs, view.rs}` + `app/src/folder_workspace/{entity.rs, manager.rs}` — 5 files
+
+**Scope**: L（最大塊 polish）
+
+---
+
+### Task 20: D2 — Missing folder cwd fallback + toast
+
+**Description**: `AddTabToFolderWorkspace` handler 內檢查 `path.exists()`：
+
+- false → cwd = `$HOME`（已做）
+- false → call `toast_stack.update` 加 ephemeral toast「Folder X is missing; opened tab in home directory」
+- 一次性：`WorkspaceState` 或 model 加 `RefCell<HashSet<i32>>` 紀錄 session 內已 toast 過的 ws id
+
+**Acceptance**:
+- [ ] Folder missing 時 cwd = $HOME
+- [ ] Toast 顯示一次 / session / workspace
+- [ ] 同 ws 第 2 個新 tab → 不再 toast
+
+**Verification**:
+- 手動：建 ws 對 `/tmp/x` → `rm -rf /tmp/x` → 開 tab → toast + cwd home
+- 再開一次 → 沒 toast
+
+**Dependencies**: 無
+
+**Files**: `app/src/workspace/view.rs` (handler) + 可能 `folder_workspace/entity.rs` (suppression state) — 2 files
+
+**Scope**: S
+
+---
+
+### Task 21: D1 — ModelEvent path for folder_workspace mutations
+
+**Description**: 加 5 個 ModelEvent 變體：
+
+```rust
+UpsertFolderWorkspace { workspace: FolderWorkspace }
+DeleteFolderWorkspace { id: i32, fallback_id: Option<i32> }
+UpdateFolderWorkspaceCollapsed { id: i32, collapsed: bool }
+UpdateFolderWorkspaceDisplayOrder { id: i32, display_order: i32 }
+UpdateFolderWorkspaceName { id: i32, name: String }
+```
+
+`app/src/persistence/sqlite.rs:601` 區塊新 match arms。`entity.rs` 改用 `model_event_sender.send(...)` 不再 fresh RW connection。Tentative-id (max + 1) 給 in-memory create；restart 重 load 校準。
+
+**Acceptance**:
+- [ ] 5 個 ModelEvent variants 加好
+- [ ] sqlite.rs writer thread 處理
+- [ ] entity.rs 沒有 `establish_rw_connection` 引用
+- [ ] 8 個 manager unit tests 過（DB-level）+ 6 個 entity test (in-memory level，新加) 過
+
+**Verification**:
+- `cargo test` 過
+- Run app, smoke create/rename/delete/reorder
+- DB check 各個 column 正確
+
+**Dependencies**: 無（但完成後 T22 才能 cleanup）
+
+**Files**: `app/src/persistence/{mod.rs, sqlite.rs}` + `app/src/folder_workspace/entity.rs` — 3 files
+
+**Scope**: L
+
+---
+
+### Task 22: D4 — Cleanup spike-only changes
+
+**Description**:
+
+1. `git revert a418008`（default-on debug flag）
+2. 移除 `app/src/persistence/mod.rs` 的 `pub use sqlite::establish_rw_connection`（D1 後 entity 不需要）
+3. 移除 `app/src/folder_workspace/mod.rs` 的 `#![allow(dead_code)]`
+
+**Acceptance**:
+- [ ] `cargo build --features gui` + `cargo clippy -- -D warnings` 都過
+- [ ] flag 預設 off（user 在 Settings → Developer / Features 自己 toggle）
+- [ ] grep `establish_rw_connection.*pub` 在 persistence crate 內 0 結果
+
+**Verification**:
+- Settings → Developer / Features 看 toggle 預設 off
+- `flag off` 跑 → sidebar 跟 upstream 一樣
+
+**Dependencies**: T21（必須 ModelEvent path 完成才能拿掉 establish_rw_connection re-export）
+
+**Files**: `app/src/persistence/mod.rs` + `app/src/folder_workspace/mod.rs` + revert commit — 2 files + 1 revert
+
+**Scope**: S
+
+---
+
+### Task 23: P6 — event_loop_proxy folder picker + rename modal
+
+**Description**: 取代 osascript 路徑。看 [`crates/warpui/src/windowing/winit/delegate.rs:333+`](file:///Users/linhancheng/Desktop/projects/warp-fork/crates/warpui/src/windowing/winit/delegate.rs) 既有 picker pattern。
+
+- 加 `CustomEvent::FolderPicked { path }` / `CustomEvent::FolderWorkspaceRenamed { id, new_name }` 變體
+- `+ Add Folder Workspace` click → spawn thread → `native_dialog::FileDialog` → `event_loop_proxy.send_event` → main thread dispatch `AddFolderWorkspace`
+- Rename 同樣 pattern（或併到 T18 inline editor 做完就不需要這條 rename 路徑）
+
+**Acceptance**:
+- [ ] Folder picker 不 panic
+- [ ] Picker 期間其他 UI 操作不 block（不阻 main thread）
+- [ ] 跨平台 OK（Linux / Windows folder picker 也 work，雖然 Warp 主用 macOS）
+
+**Verification**:
+- 手動：點 `+ Add Folder Workspace` → picker 出現 → cancel / pick 都 OK
+- 測試：picker 開著時點 sidebar 別處沒 freeze
+
+**Dependencies**: 無（T18 完成則 rename 不需這條）
+
+**Files**: `app/src/workspace/view/vertical_tabs.rs` + `crates/warpui/src/windowing/winit/delegate.rs` + 可能 `app/src/lib.rs`（CustomEvent dispatch） — 3 files
+
+**Scope**: M
+
+---
+
+### Task 24: D3 — Integration test
+
+**Description**: 用 `crates/integration` Builder/TestStep 框架寫 1 個 e2e test：
+
+1. Build app + flag on
+2. 建 workspace `~/code/foo`
+3. 在 foo 開新 tab，assert tab.fwid = foo.id
+4. Toggle collapse foo
+5. Restart app（snapshot + restore）
+6. Assert workspace 仍存在 + collapse 狀態保留 + tab 仍綁 foo
+
+進階 test（optional）：rename / delete tab reassign / cross-ws drop rejection。
+
+**Acceptance**:
+- [ ] 1+ e2e test 過
+- [ ] CI run（如有）整合
+
+**Verification**:
+- `cargo nextest run -p integration --test folder_workspace` 過
+
+**Dependencies**: 無（建議 T17-T22 都先做完，test 才 cover 多）
+
+**Files**: 新 `crates/integration/tests/folder_workspace.rs` — 1 file
+
+**Scope**: M
+
+---
+
+## V2 Phase Checkpoint
+
+- [ ] T15-T24 verified
+- [ ] PRODUCT.md V2 Success Criteria 全打勾
+- [ ] `./script/presubmit` 過
+- [ ] `cargo clippy --bin warp-oss --features gui --lib -- -D warnings` 0 warning
+- [ ] flag-off 時 sidebar 跟 upstream `warpdotdev/warp` 一致（diff 純加在 if-branch）
+- [ ] **Human review** 才 close PR
+
+---
+
+**Phase 3 V2 update done — 2026-04-30 補。等 user 排優先序開做。**

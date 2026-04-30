@@ -183,4 +183,100 @@ if FeatureFlag::FolderWorkspacesEnabled.is_enabled() {
 
 ---
 
+# V2 增量規格（2026-04-30 後補）
+
+> **Why**: V2 session 在沒 spec 的情況下做了 V5-V10 + 一批 polish；之後 user 確認規格有缺漏，回填這份增量規格供下次接手對齊。命名與 V2_HANDOFF.md 內 `V1-V9` 編號**不同**（handoff 是 work group 編號，這裡是 user story 編號），避免混淆 — 下表對齊。
+
+## V2 已交付 / 部分交付的 user stories
+
+### S1 Workspace 可整理（rename / reorder / delete）
+
+- 從 sidebar header 右鍵 menu 選 Rename / Move Up / Move Down / Delete 操作
+- 從 sidebar header 上的 icon button row 點 ✎↑↓✕ 也是同樣行為
+- Delete 時 tabs reassign 到第一個 remaining workspace（沒則 fwid → None）— **不丟工作**
+- Rename 用文字輸入框（**目前 osascript dialog；polish 後改 inline editor**）
+- Reorder 用兩個方向鍵切順序（**目前用 Move Up/Down；polish 後加 drag header**）
+
+對應交付：commit `4c6a7c3`。Polish 未做：inline editor / drag header / Hoverable / svg icons / delete confirm。
+
+### S2 Workspace header 顯示更多識別資訊
+
+- Header line 1：`▾ 📁 <name> (<tab_count>)` 14pt — folder icon + 名稱 + tab 數
+- Header line 2：`<path>` 11pt secondary color — 完整路徑
+- Folder missing 時 line 1 加 `⚠`
+- 收起時 count 跟 path **都還看得到**，summary-at-a-glance 不需展開
+
+對應交付：commit `4c6a7c3`。
+
+### S3 Tab 視覺對換 — 路徑移到 workspace 層級
+
+- 同個 workspace 內所有 tab 都跑同一個資料夾，tab 重複顯示 cwd / branch 是無效資訊
+- FolderWorkspacesEnabled on 時 tab 強制 minimal mode：
+    - **保留**：title (Command 模式) + active session indicator dot + tab color + right-side badges (unread / agent activity / PR link) + close button (hover) + pane count badge
+    - **砍**：second_line (cwd / branch / 別的 subtitle) + 整條 metadata-left line
+- 不依 user `VerticalTabsPrimaryInfo` 設定（強制 override）
+
+對應交付：commit `4c6a7c3`。
+
+### S4 Cmd+T 開新 tab 落在「上次操作的 workspace」
+
+- 不新增快捷鍵（`Cmd+Shift+T` 是 Warp 既有 `AddTerminalTab`）
+- `FolderWorkspaceModel` 內存 `last_active_id`
+- 點 workspace header 或點 `+ New Tab` 都更新 last_active_id
+- 既有 cmd+T fallback 改用 last_active_id 而非 first_workspace
+- 重啟 app 後 last_active_id reset 為 first workspace（純 in-memory）
+
+對應交付：commit `4c6a7c3`。
+
+### S5 Tab 同 workspace 內可 reorder，跨 workspace 拒絕
+
+- 既有 tab drag 在 grouping mode 下會混淆群組視覺，需限制
+- `on_tab_drag` 內加同 `folder_workspace_id` 檢查，跨 workspace 直接 no-op
+- 同 workspace 內 reorder 仍透過 `Draggable` + `DropTarget` 既有 infra work
+
+對應交付：commit `4c6a7c3`。
+
+## V2 polish 已知缺口（**還沒做**）
+
+| ID | 項目 | 為何要做 |
+|---|---|---|
+| P1 | **Drag workspace header** 切順序（不只 Move Up/Down icons） | User 明說「都要」；多 workspace 時方向鍵 N 次太繁瑣 |
+| P2 | **Rename 用 inline editor** 取代 osascript dialog | Inline 比 modal 流暢；跟 Warp tab rename pattern 一致 |
+| P3 | **Hover 才顯示 icon button row** 而非 always-visible | 減少 sidebar 視覺雜訊；符合 hover 慣例 |
+| P4 | **Delete 二次確認** dialog | Workspace 配置刪掉雖 tabs 不丟，但 display_order / name / collapse 全沒了 |
+| P5 | **Icon 用 Warp 既有 svg** 取代 unicode (✎↑↓✕📁) | 字體 render 跨平台不一致；svg 可控 |
+| P6 | **osascript → event_loop_proxy thread picker**（folder picker + rename dialog 都改） | macOS-only / blocking；production 要改 |
+
+## V1 deferred 仍未做（從原 V2_HANDOFF.md / TECH.md）
+
+| ID | 項目 | Handoff 編號 |
+|---|---|---|
+| D1 | ModelEvent path for FolderWorkspace mutations（取代 `establish_rw_connection`） | 原 V1.3 |
+| D2 | Folder missing 開新 tab → cwd `$HOME` + 一次性 toast | 原 V7 |
+| D3 | Integration test via `crates/integration` Builder/TestStep | 原 V8 |
+| D4 | Cleanup spike-only changes：revert debug-on flag (`a418008`)、`establish_rw_connection` pub re-export、`#![allow(dead_code)]` in `app/src/folder_workspace/mod.rs` | 原 V9 |
+
+## V2 Success Criteria（補充原 v1 那組）
+
+- [x] **Header lifecycle**：rename / reorder / delete 三件事都可從 header 觸發（icon button **或** 右鍵 menu）
+- [x] **Header info density**：name + tab count + path 在 expanded / collapsed 兩個狀態都看得到
+- [x] **Tab UI minimal mode**：flag-on 時 tab row 不顯示 cwd / branch / 任何 secondary subtitle
+- [x] **Cmd+T placement**：新 tab 落在 last-active workspace（不新增快捷鍵）
+- [x] **Tab reorder constraint**：同 ws 內 reorder OK；跨 ws drop no-op
+- [ ] **P1 drag header reorder**：workspace header 可 drag 重排
+- [ ] **P2 rename inline editor**：rename 用 sidebar 內 inline editor，不 modal
+- [ ] **P3 hover icons**：icon button row 預設隱藏，hover header 才顯示
+- [ ] **P4 delete confirm**：刪 workspace 跳一次確認 dialog
+- [ ] **P5 svg icons**：所有 4 個 header icons 用 Warp svg 不用 unicode
+- [ ] **D1 ModelEvent path**：所有 folder workspace mutation 走 ModelEvent，不再 fresh RW connection
+- [ ] **D2 missing folder toast**：開 tab 在 missing folder workspace → cwd $HOME + toast 一次
+- [ ] **D3 integration test**：`crates/integration` 至少 1 個 e2e test
+- [ ] **D4 cleanup**：spike-only changes 全 revert
+
+---
+
+**V2 spec done — 2026-04-30 補。Awaiting Phase 2 (TECH.md) update + Phase 3 (TASKS.md) update.**
+
+---
+
 **Phase 1 done. Awaiting human review before Phase 2 (PLAN).**

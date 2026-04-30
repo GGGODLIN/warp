@@ -132,3 +132,226 @@ FK convention：`<table>_id Integer NOT NULL` referencing PK Integer。`joinable
 **Phase 2 done. Awaiting human review before Phase 3 (TASKS)。**
 
 Phase 3 用 [`agent-skills:planning-and-task-breakdown`](file:///Users/linhancheng/.claude/plugins/cache/addy-agent-skills/agent-skills/1.0.0/skills/planning-and-task-breakdown) skill 把這份 plan 拆成 ~10-15 個 acceptance-tested tasks。
+
+---
+
+# V2 增量技術規劃（2026-04-30 後補）
+
+> 對齊 [PRODUCT.md V2 增量規格](file:///Users/linhancheng/Desktop/projects/warp-fork/specs/sidebar-folder-workspaces/PRODUCT.md)。本段描述「已交付」的實作 + 「待做」的設計。
+
+## V2 已交付的組件 / 變更
+
+### 1. `app/src/folder_workspace/entity.rs` — FolderWorkspaceModel 新方法
+
+```rust
+toggle_collapsed(id, ctx) -> Result<()>
+rename_workspace(id, new_name, ctx) -> Result<()>
+move_workspace(id, delta, ctx) -> Result<()>   // delta = -1 up, +1 down
+delete_workspace(id, ctx) -> Result<()>        // tabs reassign to first remaining
+last_active_id() -> Option<i32>                // V9 cmd+T fallback
+set_last_active(id)
+```
+
+每個 mutation 都用 `establish_rw_connection` 寫 DB（同 spike pattern；待 D1 改 ModelEvent path）。
+
+### 2. `app/src/folder_workspace/manager.rs` — 新 free fns
+
+```rust
+rename(conn, id, new_name) -> QueryResult<usize>
+set_display_order(conn, id, new_order) -> QueryResult<usize>
+delete_with_tab_reassignment(conn, id, fallback_id: Option<i32>) -> QueryResult<()>
+```
+
+### 3. `app/src/folder_workspace/view.rs` — FolderWorkspaceHeader 簽章變更
+
+```rust
+FolderWorkspaceHeader::new(name)
+    .with_path(path)              // V6: 第二行 path
+    .with_tab_count(count)        // V6: title 後綴 (N)
+    .with_collapsed(bool)
+    .with_folder_missing(bool)
+    .with_title_color(ColorU)     // 14pt main_text_color
+    .with_path_color(ColorU)      // 11pt sub_text_color
+    .with_style(UiComponentStyles)
+```
+
+兩 line layout：title 14pt + path 11pt (在 collapsed/expanded 都顯示)。
+
+### 4. `app/src/workspace/action.rs` — 新 actions
+
+```rust
+RenameFolderWorkspace { id }
+MoveFolderWorkspaceUp { id }
+MoveFolderWorkspaceDown { id }
+DeleteFolderWorkspace { id }
+ToggleFolderWorkspaceCollapsed { id }   // V3 spike 已加
+AddTabToFolderWorkspace { folder_workspace_id, path }
+AddFolderWorkspace { name, path }
+```
+
+### 5. `app/src/workspace/view/vertical_tabs.rs` — render path 重寫
+
+- Header 包 `EventHandler` 同時掛 `on_left_mouse_down` (toggle collapse) + `on_right_mouse_down` (osascript "choose from list" menu)
+- Header 旁 always-visible icon row：4 個 unicode icon button (`✎ ↑ ↓ ✕`)
+- Tab grouping：unassigned flat → 每 ws header → indented children → `+ New Tab` → 底部 `+ Add Folder Workspace`
+- **`render_terminal_row_content`** + **`render_pane_row`** 加 `folder_minimal = FolderWorkspacesEnabled.is_enabled()` 開關，drop 第二/三行 + subtitle（V10 minimal mode）
+
+### 6. `app/src/workspace/view.rs` — action handlers + on_tab_drag constraint
+
+- 6 個 action handler（rename / move / delete / toggle / add-tab / add-ws）
+- `on_tab_drag` 加同 `folder_workspace_id` 檢查（V8）— 跨 ws drop no-op
+- `assign_default_folder_workspace_to_active_tab` 改用 `last_active_id()`（V9）
+
+## V2 待做組件（對應 PRODUCT.md V2 polish + deferred）
+
+### P1 Drag workspace header reorder
+
+**設計**：
+
+- VerticalTabsPanelState 新增 `folder_workspace_drag_states: RefCell<HashMap<i32, DraggableState>>`
+- VerticalTabsPanelState 新增 `folder_workspace_header_positions: RefCell<HashMap<i32, RectF>>`（透過 `SavePosition` 在 render 時 capture 每個 header 的 Y rect）
+- Header `EventHandler` 外層 wrap `Draggable::new(state, element).with_drag_axis(DragAxis::VerticalOnly)`
+- 對應 actions：`StartFolderWorkspaceDrag { id }` / `DragFolderWorkspace { id, position }` / `DropFolderWorkspace`
+- on-drag 動作：依 drag rect.y 比對 captured positions，找最近的 neighbor，dispatch `MoveFolderWorkspaceUp/Down` 直到 swap 完成
+- DB write：`set_display_order` 多次（或加 batch reorder method `reorder_all(orders: Vec<(i32, i32)>)`）
+
+**Trade-off**：drag-and-drop UX 比 Move Up/Down 順手但需要 sidebar Y-position infra。寫一次後 V7 也可重用 pattern。
+
+### P2 Rename inline editor
+
+**設計**：
+
+- 抄 `Workspace.tab_rename_editor: ViewHandle<EditorView>` pattern
+- `Workspace` 加 `folder_workspace_rename_editor: ViewHandle<EditorView>` + `folder_workspace_being_renamed: Option<i32>`
+- `WorkspaceState` 加 `is_folder_workspace_being_renamed()` query
+- `RenameFolderWorkspace { id }` action handler 改成「進入 rename mode」而非開 osascript
+- vertical_tabs.rs header render：當 `is_folder_workspace_being_renamed == Some(id)` 時 render `folder_workspace_rename_editor` 取代 title `Text`
+- editor commit (Enter / blur) → dispatch `SetFolderWorkspaceName { id, name }` action → entity.rename_workspace
+- Cancel (Escape) → 退出 rename mode 不寫 DB
+
+**Trade-off**：玻璃流暢、跟 Warp 既有 rename 一致；但要 plumb editor + WorkspaceState flag + render switch。
+
+### P3 Hover icons
+
+**設計**：
+
+- icon row 用 `Hoverable::new(state, |hover_state| { ... })` 包起來
+- 父 header element 也 wrap `Hoverable`（共享同一個 mouse_state？或分開）
+- 簡化：icon row container 用一個 `MouseStateHandle` (per-workspace) 存在 `VerticalTabsPanelState.folder_workspace_header_hover_states`，render 時 query is_hovered → 控制 opacity 0/1 或 conditional add_child
+
+**Trade-off**：行為穩定但 hover state 要 plumb HashMap<i32, MouseStateHandle>。或更簡單：icon row 永遠 occupy 空間，opacity 0/1 切；好處不會 layout shift。
+
+### P4 Delete confirm
+
+**設計**：
+
+- 看 `app/src/workspace/delete_conversation_confirmation_dialog.rs` pattern；clone 一份 `delete_folder_workspace_confirmation_dialog.rs`
+- `WorkspaceState` 加 `pending_folder_workspace_delete: Option<i32>`
+- `DeleteFolderWorkspace { id }` action handler 改成「show confirm dialog」
+- 加新 action `ConfirmDeleteFolderWorkspace { id }` 跟 `CancelDeleteFolderWorkspace`
+- Confirm → 走原 entity.delete_workspace + tab reassignment
+
+**Trade-off**：再加一個 modal layer 但 dest UX 安全。osascript 一次性 dialog 也是 trivial fallback。
+
+### P5 SVG icons
+
+**設計**：
+
+- grep `WarpIcon::DotsVertical` / `WarpIcon::Pencil` / `WarpIcon::ArrowUp` / `WarpIcon::ArrowDown` / `WarpIcon::Close` 找既有列舉
+- 沒對應的就用 `to_warpui_icon(color)` 加新變體 in `crates/.../icons.rs` 或 inline `bundled/svg/<name>.svg`
+- `make_icon_button` helper 改用 svg 不用 `Text`
+
+**Trade-off**：找不到 svg 就要新增 asset，但 visual consistency 大幅提升。
+
+### P6 event_loop_proxy folder picker + rename dialog
+
+**設計**：
+
+- 看 [`crates/warpui/src/windowing/winit/delegate.rs:333+`](file:///Users/linhancheng/Desktop/projects/warp-fork/crates/warpui/src/windowing/winit/delegate.rs) 既有 picker spawn pattern
+- 加 `CustomEvent::FolderPicked { path }` / `CustomEvent::FolderWorkspaceRenamed { id, new_name }` 變體
+- click handler `spawn` thread → `native_dialog::FileDialog` / 自製 text input modal → 結果透過 `event_loop_proxy.send_event(…)` 回 main thread
+- main thread 收到 `CustomEvent` → dispatch 對應 action
+
+**Trade-off**：production-grade、跨平台、不會 panic（不 pump main run loop）；但要 plumb event_loop_proxy 跟 CustomEvent 變體。osascript 在 spike 階段是 acceptable。
+
+### D1 ModelEvent path for FolderWorkspace mutations
+
+**設計**：
+
+- `app/src/persistence/mod.rs` ModelEvent 加 4 個變體：
+    ```rust
+    UpsertFolderWorkspace { workspace: FolderWorkspace }
+    DeleteFolderWorkspace { id: i32, fallback_id: Option<i32> }
+    UpdateFolderWorkspaceCollapsed { id: i32, collapsed: bool }
+    UpdateFolderWorkspaceDisplayOrder { id: i32, display_order: i32 }
+    UpdateFolderWorkspaceName { id: i32, name: String }
+    ```
+- `app/src/persistence/sqlite.rs:601` 區塊新 match arms
+- `entity.rs` 改用 `model_event_sender.send(ModelEvent::*)` 不再 fresh RW connection
+- **Tentative-id 處理**：用 `max(existing.id) + 1` 當 in-memory 暫時 id；DB 真實 id 透過 startup 重 load 校準
+- 移除 `crates/persistence` `establish_rw_connection` pub re-export
+
+**Trade-off**：production 級別、合 Warp single-writer advisory；但 tentative-id 機制有重啟前 ID 不一致 edge case。
+
+### D2 Missing folder toast
+
+**設計**：
+
+- 看 `app/src/workspace/toast_stack.rs` 既有 toast 系統
+- `AddTabToFolderWorkspace` handler 內，`!path.exists()` 時：
+    - cwd = `$HOME`
+    - `self.toast_stack.update(ctx, |view, ctx| view.add_ephemeral_toast(...))`
+- 一次性：加 `RefCell<HashSet<i32>>` 或 `WorkspaceState` flag 記錄 session 內哪幾個 ws 已 toast 過
+
+**Trade-off**：純 view-side feature，零 DB write。
+
+### D3 Integration test
+
+**設計**：
+
+- 抄 `crates/integration/` 既有 test pattern（用 [`warp-integration-test`](file:///Users/linhancheng/.claude/plugins/cache/warp/warp/skills/warp-integration-test/) skill 找 sample）
+- 至少 1 e2e test：build → 建 ws → 加 tab → toggle collapse → restart → assert 持久化
+- 進階 test：rename / delete / reorder / cross-ws drag rejection
+
+**Trade-off**：第一個 test 學 framework 成本高；後續 test 都 cheap。
+
+### D4 Cleanup spike-only
+
+**Files**：
+
+- `git revert a418008` (default-on debug build flag)
+- `app/src/persistence/mod.rs` 移除 `pub use sqlite::establish_rw_connection`（D1 完成後 entity 不需要）
+- `app/src/folder_workspace/mod.rs` 移除 `#![allow(dead_code)]`
+
+## V2 Risks & Mitigation
+
+| 風險 | 影響 | 緩解 | 對應項目 |
+|---|---|---|---|
+| Drag header swap thrashing（Y-position 計算 unstable） | drag UX 卡頓 | swap threshold + DragAxis::VerticalOnly + neighbor-only swap | P1 |
+| Inline editor 跟 tab rename editor 互踩 | rename 行為混亂 | 獨立 `folder_workspace_rename_editor` ViewHandle + `WorkspaceState` 獨立 flag | P2 |
+| Icon row hover state HashMap memory leak（刪 ws 沒清） | memory grow over time | `delete_workspace` 同步清 hover map entry | P3 |
+| Delete confirm dialog 跟 conversation delete dialog 重複 boilerplate | 維護成本 | 抽 generic `delete_confirmation_dialog<T>` helper（後續 refactor） | P4 |
+| Tentative-id 跟 DB id 衝突（multi-thread create） | tab 跟 ws 對應錯亂 | 序列化 in-memory create（main thread only） + 重啟重 load 校準 | D1 |
+| Toast spam（同 ws 多次 missing） | UX 干擾 | session 內 `HashSet<workspace_id>` 抑制 | D2 |
+| Integration test framework 不熟 | 第一個 test 工程量大 | 先 1 個 happy path test，cover create + persist + restart | D3 |
+
+## V2 Implementation Order
+
+| Step | Item | Verification |
+|---|---|---|
+| 1 | P5 svg icons（最便宜 visual upgrade） | 4 個 icon 視覺一致 |
+| 2 | P3 hover icons（純 view state） | hover header 才出現 icon row |
+| 3 | P4 delete confirm dialog | 點 ✕ → confirm → 真刪 / cancel → 不動 |
+| 4 | P2 rename inline editor | 點 ✎ / 右鍵 Rename → editor 出現；commit / cancel work |
+| 5 | P1 drag header reorder | drag header 上下 → display_order 跟著變 + DB update |
+| 6 | D2 missing folder toast | tab in missing ws → cwd $HOME + toast 一次 |
+| 7 | D1 ModelEvent path | 改完所有 mutation 不走 establish_rw_connection |
+| 8 | D4 cleanup（依賴 D1 完成） | revert + remove pub re-export + remove dead_code allow |
+| 9 | P6 event_loop_proxy picker | folder picker 不 block UI；不 panic |
+| 10 | D3 integration test | `cargo nextest run` 過 |
+
+理論上 P5/P3 可平行；P1/P2 互不依賴可平行；D1/D2 獨立；D4 必須最後。
+
+---
+
+**V2 tech plan done — 2026-04-30 補。Awaiting Phase 3 TASKS.md update。**
