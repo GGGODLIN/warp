@@ -1810,6 +1810,8 @@ fn render_groups(
                     )
                     .with_color(theme.sub_text_color(theme.background()).into())
                     .finish();
+                    let new_tab_path_for_left = new_tab_path.clone();
+                    let new_tab_path_for_right = new_tab_path.clone();
                     let new_tab_btn = EventHandler::new(
                         Container::new(new_tab_text)
                             .with_padding(Padding::uniform(6.).with_left(20.))
@@ -1819,10 +1821,34 @@ fn render_groups(
                         ctx.dispatch_typed_action(
                             WorkspaceAction::AddTabToFolderWorkspace {
                                 folder_workspace_id: fw_id,
-                                path: new_tab_path.clone(),
+                                path: new_tab_path_for_left.clone(),
                                 skip_default_command: false,
                             },
                         );
+                        DispatchEventResult::StopPropagation
+                    })
+                    .on_right_mouse_down(move |ctx, _, _| {
+                        let script = "try\n    set choice to choose from list {\"Open with default command\", \"Open without default command\"} with prompt \"New tab\"\n    if choice is false then\n        \"\"\n    else\n        item 1 of choice\n    end if\non error\n    \"\"\nend try";
+                        let out = std::process::Command::new("osascript")
+                            .args(["-e", script])
+                            .output();
+                        if let Ok(o) = out {
+                            let raw = String::from_utf8_lossy(&o.stdout).trim().to_string();
+                            let skip = match raw.as_str() {
+                                "Open with default command" => Some(false),
+                                "Open without default command" => Some(true),
+                                _ => None,
+                            };
+                            if let Some(skip_default_command) = skip {
+                                ctx.dispatch_typed_action(
+                                    WorkspaceAction::AddTabToFolderWorkspace {
+                                        folder_workspace_id: fw_id,
+                                        path: new_tab_path_for_right.clone(),
+                                        skip_default_command,
+                                    },
+                                );
+                            }
+                        }
                         DispatchEventResult::StopPropagation
                     })
                     .finish();
@@ -2001,6 +2027,8 @@ fn render_groups(
                 )
                 .with_color(theme.sub_text_color(theme.background()).into())
                 .finish();
+                let new_tab_path_for_left = new_tab_path.clone();
+                let new_tab_path_for_right = new_tab_path.clone();
                 let new_tab_btn = EventHandler::new(
                     Container::new(new_tab_text)
                         .with_padding(Padding::uniform(6.).with_left(20.))
@@ -2010,10 +2038,34 @@ fn render_groups(
                     ctx.dispatch_typed_action(
                         WorkspaceAction::AddTabToFolderWorkspace {
                             folder_workspace_id: fw_id,
-                            path: new_tab_path.clone(),
+                            path: new_tab_path_for_left.clone(),
                             skip_default_command: false,
                         },
                     );
+                    DispatchEventResult::StopPropagation
+                })
+                .on_right_mouse_down(move |ctx, _, _| {
+                    let script = "try\n    set choice to choose from list {\"Open with default command\", \"Open without default command\"} with prompt \"New tab\"\n    if choice is false then\n        \"\"\n    else\n        item 1 of choice\n    end if\non error\n    \"\"\nend try";
+                    let out = std::process::Command::new("osascript")
+                        .args(["-e", script])
+                        .output();
+                    if let Ok(o) = out {
+                        let raw = String::from_utf8_lossy(&o.stdout).trim().to_string();
+                        let skip = match raw.as_str() {
+                            "Open with default command" => Some(false),
+                            "Open without default command" => Some(true),
+                            _ => None,
+                        };
+                        if let Some(skip_default_command) = skip {
+                            ctx.dispatch_typed_action(
+                                WorkspaceAction::AddTabToFolderWorkspace {
+                                    folder_workspace_id: fw_id,
+                                    path: new_tab_path_for_right.clone(),
+                                    skip_default_command,
+                                },
+                            );
+                        }
+                    }
                     DispatchEventResult::StopPropagation
                 })
                 .finish();
