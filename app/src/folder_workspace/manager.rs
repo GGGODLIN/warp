@@ -117,6 +117,20 @@ pub fn set_display_order(
         .execute(conn)
 }
 
+/// Set the per-workspace default command (the command auto-run in new tabs).
+/// `None` clears the column (NULL); `Some("")` is also stored as NULL so
+/// callers can use empty-string commit to mean "no command".
+pub fn set_default_command(
+    conn: &mut SqliteConnection,
+    id: i32,
+    command: Option<String>,
+) -> QueryResult<usize> {
+    let normalized = command.filter(|s| !s.is_empty());
+    diesel::update(folder_workspaces::table.find(id))
+        .set(folder_workspaces::default_command.eq(normalized))
+        .execute(conn)
+}
+
 /// Delete a workspace, reassigning its tabs to `fallback_id` (or NULL if None).
 pub fn delete_with_tab_reassignment(
     conn: &mut SqliteConnection,
@@ -349,6 +363,42 @@ mod tests {
             .get_result(&mut conn)
             .unwrap();
         assert_eq!(nulled, 2);
+    }
+
+    #[test]
+    fn set_default_command_stores_some_and_normalizes_empty_to_null() {
+        let mut conn = setup_conn();
+        let fw = create(&mut conn, "x", Path::new("/tmp/x"), None).unwrap();
+        assert_eq!(fw.default_command, None);
+
+        set_default_command(&mut conn, fw.id, Some("claude".to_string())).unwrap();
+        assert_eq!(
+            get_by_id(&mut conn, fw.id).unwrap().default_command.as_deref(),
+            Some("claude"),
+        );
+
+        set_default_command(&mut conn, fw.id, Some(String::new())).unwrap();
+        assert_eq!(get_by_id(&mut conn, fw.id).unwrap().default_command, None);
+
+        set_default_command(&mut conn, fw.id, Some("nvim".to_string())).unwrap();
+        set_default_command(&mut conn, fw.id, None).unwrap();
+        assert_eq!(get_by_id(&mut conn, fw.id).unwrap().default_command, None);
+    }
+
+    #[test]
+    fn create_with_default_command_persists_value() {
+        let mut conn = setup_conn();
+        let fw = create(
+            &mut conn,
+            "with-cmd",
+            Path::new("/tmp/with-cmd"),
+            Some("claude".to_string()),
+        )
+        .unwrap();
+        assert_eq!(fw.default_command.as_deref(), Some("claude"));
+
+        let same = get_by_id(&mut conn, fw.id).unwrap();
+        assert_eq!(same.default_command.as_deref(), Some("claude"));
     }
 
     #[test]

@@ -764,6 +764,12 @@ fn handle_model_event(event: ModelEvent, connection: &mut SqliteConnection) -> a
                 .map_err(anyhow::Error::from)
                 .context("error setting folder workspace display order")
         }
+        ModelEvent::UpdateFolderWorkspaceDefaultCommand { id, command } => {
+            crate::folder_workspace::manager::set_default_command(connection, id, command)
+                .map(|_| ())
+                .map_err(anyhow::Error::from)
+                .context("error setting folder workspace default command")
+        }
         ModelEvent::DeleteFolderWorkspace { id, fallback_id } => {
             crate::folder_workspace::manager::delete_with_tab_reassignment(
                 connection,

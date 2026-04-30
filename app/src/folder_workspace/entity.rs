@@ -173,6 +173,25 @@ impl FolderWorkspaceModel {
         Ok(())
     }
 
+    pub fn set_default_command(
+        &mut self,
+        id: i32,
+        command: Option<String>,
+        ctx: &mut ModelContext<Self>,
+    ) -> anyhow::Result<()> {
+        let Some(idx) = self.workspaces.iter().position(|w| w.id == id) else {
+            return Ok(());
+        };
+        let normalized = command.filter(|s| !s.is_empty());
+        self.workspaces[idx].default_command = normalized.clone();
+        self.send_event(ModelEvent::UpdateFolderWorkspaceDefaultCommand {
+            id,
+            command: normalized,
+        });
+        ctx.emit(FolderWorkspaceEvent::Updated { id });
+        Ok(())
+    }
+
     pub fn move_workspace(
         &mut self,
         id: i32,

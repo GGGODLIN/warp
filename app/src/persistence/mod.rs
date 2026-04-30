@@ -407,6 +407,10 @@ pub enum ModelEvent {
         id: i32,
         display_order: i32,
     },
+    UpdateFolderWorkspaceDefaultCommand {
+        id: i32,
+        command: Option<String>,
+    },
     DeleteFolderWorkspace {
         id: i32,
         fallback_id: Option<i32>,
