@@ -1,21 +1,29 @@
 //! WarpUI render component for folder workspace headers.
 //!
 //! Renders a 2-line header: line 1 has the disclosure arrow, folder icon,
-//! workspace name, tab count, and missing-folder warning; line 2 shows the
-//! folder path in a secondary color. The host (vertical_tabs.rs) is responsible
-//! for the click handler that toggles collapse and the hover icon button row.
+//! workspace name, and a row of small CircleFilled dots indicating tab count
+//! (one dot per tab, max 9; "9+" fallback for >=10); line 2 shows the
+//! folder path in a secondary color, clipped to ellipsis on overflow.
+//! The host (vertical_tabs.rs) is responsible for the click handler that
+//! toggles collapse and the hover icon button row.
 
 use std::borrow::Cow;
 
 use warpui::elements::{
-    Container, CrossAxisAlignment, Element, Flex, MainAxisSize, Padding, ParentElement, Text,
+    ConstrainedBox, Container, CrossAxisAlignment, Element, Flex, MainAxisSize, Padding,
+    ParentElement, Shrinkable, Text,
 };
+use warpui::text_layout::ClipConfig;
 use warpui::ui_components::components::{UiComponent, UiComponentStyles};
 
 use pathfinder_color::ColorU;
+use warp_core::ui::Icon as WarpIcon;
 
 const HEADER_TITLE_FONT_SIZE: f32 = 14.0;
 const HEADER_PATH_FONT_SIZE: f32 = 11.0;
+const TAB_COUNT_DOT_SIZE: f32 = 6.0;
+const TAB_COUNT_DOT_SPACING: f32 = 3.0;
+const TAB_COUNT_DOT_MAX: usize = 9;
 
 #[derive(Debug, Clone, Default)]
 pub struct FolderWorkspaceHeader {
@@ -26,6 +34,7 @@ pub struct FolderWorkspaceHeader {
     folder_missing: bool,
     title_color: Option<ColorU>,
     path_color: Option<ColorU>,
+    dot_color: Option<ColorU>,
     styles: UiComponentStyles,
 }
 
@@ -39,6 +48,7 @@ impl FolderWorkspaceHeader {
             folder_missing: false,
             title_color: None,
             path_color: None,
+            dot_color: None,
             styles: UiComponentStyles::default(),
         }
     }
@@ -72,6 +82,11 @@ impl FolderWorkspaceHeader {
         self.path_color = Some(color);
         self
     }
+
+    pub fn with_dot_color(mut self, color: ColorU) -> Self {
+        self.dot_color = Some(color);
+        self
+    }
 }
 
 impl UiComponent for FolderWorkspaceHeader {
@@ -83,22 +98,60 @@ impl UiComponent for FolderWorkspaceHeader {
             .font_family_id
             .expect("FolderWorkspaceHeader requires font_family_id (set via with_style)");
 
-        let arrow = if self.collapsed { "▸" } else { "▾" };
+        let arrow = if self.collapsed { "▾" } else { "▾" };
+        let arrow = if self.collapsed { "▸" } else { arrow };
         let warn = if self.folder_missing { " ⚠" } else { "" };
-        let count_suffix = if self.tab_count > 0 {
-            format!(" ({})", self.tab_count)
-        } else {
-            String::new()
-        };
-        let title_label = format!("{} 📁 {}{}{}", arrow, self.name, count_suffix, warn);
+        let title_label = format!("{} 📁 {}{}", arrow, self.name, warn);
 
         let mut title_text = Text::new(
             Cow::Owned(title_label),
             font_family,
             HEADER_TITLE_FONT_SIZE,
-        );
+        )
+        .with_clip(ClipConfig::ellipsis());
         if let Some(color) = self.title_color {
             title_text = title_text.with_color(color);
+        }
+
+        let mut title_row = Flex::row()
+            .with_main_axis_size(MainAxisSize::Max)
+            .with_cross_axis_alignment(CrossAxisAlignment::Center);
+        title_row.add_child(Shrinkable::new(1., title_text.finish()).finish());
+
+        if self.tab_count > 0 {
+            if let Some(color) = self.dot_color.or(self.path_color) {
+                let mut dots = Flex::row()
+                    .with_main_axis_size(MainAxisSize::Min)
+                    .with_cross_axis_alignment(CrossAxisAlignment::Center)
+                    .with_spacing(TAB_COUNT_DOT_SPACING);
+                let dot_n = self.tab_count.min(TAB_COUNT_DOT_MAX);
+                for _ in 0..dot_n {
+                    dots.add_child(
+                        ConstrainedBox::new(
+                            WarpIcon::CircleFilled.to_warpui_icon(color.into()).finish(),
+                        )
+                        .with_width(TAB_COUNT_DOT_SIZE)
+                        .with_height(TAB_COUNT_DOT_SIZE)
+                        .finish(),
+                    );
+                }
+                if self.tab_count > TAB_COUNT_DOT_MAX {
+                    dots.add_child(
+                        Text::new(
+                            Cow::Borrowed("+"),
+                            font_family,
+                            HEADER_PATH_FONT_SIZE,
+                        )
+                        .with_color(color)
+                        .finish(),
+                    );
+                }
+                title_row.add_child(
+                    Container::new(dots.finish())
+                        .with_margin_left(8.)
+                        .finish(),
+                );
+            }
         }
 
         let mut col = Flex::column()
@@ -106,14 +159,15 @@ impl UiComponent for FolderWorkspaceHeader {
             .with_cross_axis_alignment(CrossAxisAlignment::Stretch)
             .with_spacing(2.);
 
-        col.add_child(title_text.finish());
+        col.add_child(title_row.finish());
 
         if !self.path.is_empty() {
             let mut path_text = Text::new(
                 Cow::Owned(self.path),
                 font_family,
                 HEADER_PATH_FONT_SIZE,
-            );
+            )
+            .with_clip(ClipConfig::ellipsis());
             if let Some(color) = self.path_color {
                 path_text = path_text.with_color(color);
             }

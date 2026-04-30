@@ -826,6 +826,9 @@ struct TabGroupDragState {
 }
 
 fn resolve_vertical_tabs_mode(app: &AppContext) -> VerticalTabsResolvedMode {
+    if FeatureFlag::FolderWorkspacesEnabled.is_enabled() {
+        return VerticalTabsResolvedMode::FocusedSession;
+    }
     let settings = TabSettings::as_ref(app);
     match *settings.vertical_tabs_display_granularity.value() {
         VerticalTabsDisplayGranularity::Panes => VerticalTabsResolvedMode::Panes,
@@ -1741,6 +1744,7 @@ fn render_groups(
                     .with_folder_missing(folder_missing)
                     .with_title_color(theme.main_text_color(theme.background()).into())
                     .with_path_color(theme.sub_text_color(theme.background()).into())
+                    .with_dot_color(theme.sub_text_color(theme.background()).into())
                     .with_style(fw_styles)
                     .build()
                     .finish()
@@ -1851,15 +1855,19 @@ fn render_groups(
 
             let header_with_hover = Hoverable::new(hover_state, move |mouse_state| {
                 let is_hovered = mouse_state.is_mouse_over_element();
-                let mut row = Flex::row()
-                    .with_main_axis_size(MainAxisSize::Max)
-                    .with_cross_axis_alignment(CrossAxisAlignment::Center)
-                    .with_main_axis_alignment(MainAxisAlignment::SpaceBetween);
-                row.add_child(Shrinkable::new(1., header_inner).finish());
+                let mut stack = Stack::new().with_child(header_inner);
                 if is_hovered {
-                    row.add_child(buttons_row_el);
+                    stack.add_positioned_overlay_child(
+                        buttons_row_el,
+                        OffsetPositioning::offset_from_parent(
+                            vec2f(-8., 8.),
+                            ParentOffsetBounds::WindowByPosition,
+                            ParentAnchor::TopRight,
+                            ChildAnchor::TopRight,
+                        ),
+                    );
                 }
-                row.finish()
+                stack.finish()
             })
             .finish();
 
