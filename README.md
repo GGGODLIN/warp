@@ -18,6 +18,11 @@
   <a href="https://www.warp.dev/blog/how-warp-works">How Warp Works</a>
 </p>
 
+> [!IMPORTANT]
+> **This is a personal fork** of [warpdotdev/warp](https://github.com/warpdotdev/warp) with daily-driver additions —
+> sidebar folder workspaces (cmux-style), close-to-menu-bar mode, Chinese IME preedit fix, and CJK URL detection.
+> See **[FORK.md](./FORK.md)** for the full list of changes.
+
 > [!NOTE]
 > OpenAI is the founding sponsor of the new, open-source Warp repository, and the new agentic management workflows are powered by GPT models.
 
