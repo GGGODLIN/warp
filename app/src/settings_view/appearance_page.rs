@@ -49,8 +49,9 @@ use crate::themes::theme::{self, RespectSystemTheme, SelectedSystemThemes, Theme
 use crate::user_config::WarpConfig;
 use crate::util::bindings;
 use crate::window_settings::{
-    BackgroundBlurRadius, BackgroundBlurTexture, BackgroundOpacity, LeftPanelVisibilityAcrossTabs,
-    OpenWindowsAtCustomSize, WindowSettings, WindowSettingsChangedEvent, ZoomLevel,
+    BackgroundBlurRadius, BackgroundBlurTexture, BackgroundOpacity, CloseToMenuBar,
+    LeftPanelVisibilityAcrossTabs, OpenWindowsAtCustomSize, WindowSettings,
+    WindowSettingsChangedEvent, ZoomLevel,
 };
 use crate::workspace::header_toolbar_editor::HeaderToolbarInlineEditor;
 use crate::workspace::tab_settings::{
@@ -456,6 +457,7 @@ pub enum AppearancePageAction {
     ToggleLigatureRendering,
     ToggleBlurTexture,
     ToggleLeftPanelVisibility,
+    ToggleCloseToMenuBar,
     SetEnforceMinimumContrast(EnforceMinimumContrast),
     OpenUrl(String),
     ToggleFocusPaneOnHover,
@@ -574,6 +576,7 @@ impl TypedActionView for AppearanceSettingsPageView {
             ToggleDimInactivePanes => self.toggle_dim_inactive_panes(ctx),
             ToggleBlurTexture => self.toggle_blur_texture(ctx),
             ToggleLeftPanelVisibility => self.toggle_left_panel_visibility(ctx),
+            ToggleCloseToMenuBar => self.toggle_close_to_menu_bar(ctx),
             SetInputMode {
                 new_mode,
                 from_binding,
@@ -1284,6 +1287,13 @@ impl AppearanceSettingsPageView {
             .is_supported_on_current_platform()
         {
             window_settings_widgets.push(Box::new(ToolsPanelStateScopeWidget::default()));
+        }
+
+        if window_settings
+            .close_to_menu_bar
+            .is_supported_on_current_platform()
+        {
+            window_settings_widgets.push(Box::new(CloseToMenuBarWidget::default()));
         }
 
         if !window_settings_widgets.is_empty() {
@@ -2164,6 +2174,13 @@ impl AppearanceSettingsPageView {
             report_if_error!(window_settings
                 .left_panel_visibility_across_tabs
                 .toggle_and_save_value(ctx));
+        });
+        ctx.notify();
+    }
+
+    pub fn toggle_close_to_menu_bar(&mut self, ctx: &mut ViewContext<Self>) {
+        WindowSettings::handle(ctx).update(ctx, |window_settings, ctx| {
+            report_if_error!(window_settings.close_to_menu_bar.toggle_and_save_value(ctx));
         });
         ctx.notify();
     }
@@ -3243,6 +3260,52 @@ impl SettingsWidget for WindowBlurTextureWidget {
             }
         }
         col.finish()
+    }
+}
+
+#[derive(Default)]
+struct CloseToMenuBarWidget {
+    switch_state: SwitchStateHandle,
+}
+
+impl SettingsWidget for CloseToMenuBarWidget {
+    type View = AppearanceSettingsPageView;
+
+    fn search_terms(&self) -> &str {
+        "close menu bar status item hide quit dock background"
+    }
+
+    fn render(
+        &self,
+        view: &Self::View,
+        appearance: &Appearance,
+        app: &AppContext,
+    ) -> Box<dyn Element> {
+        let window_settings = WindowSettings::as_ref(app);
+        let is_enabled = *window_settings.close_to_menu_bar;
+
+        render_body_item::<AppearancePageAction>(
+            "Close to menu bar instead of quitting".to_string(),
+            None,
+            LocalOnlyIconState::for_setting(
+                CloseToMenuBar::storage_key(),
+                CloseToMenuBar::sync_to_cloud(),
+                &mut view.local_only_icon_tooltip_states.borrow_mut(),
+                app,
+            ),
+            ToggleState::Enabled,
+            appearance,
+            appearance
+                .ui_builder()
+                .switch(self.switch_state.clone())
+                .check(is_enabled)
+                .build()
+                .on_click(|evt_ctx, _app, _v2f| {
+                    evt_ctx.dispatch_typed_action(AppearancePageAction::ToggleCloseToMenuBar);
+                })
+                .finish(),
+            None,
+        )
     }
 }
 
